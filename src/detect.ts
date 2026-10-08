@@ -298,13 +298,19 @@ export async function identifyServer(base: string, timeoutMs = NETWORK_PROBE_TIM
   if (compat && Array.isArray(compat.data)) {
     const models = compat.data
       .filter((m: any) => !String(m.id).includes("embed"))
-      .map((m: any) => ({
-        id: m.id as string,
-        backend: "lmstudio" as const,
-        baseUrl: base,
-        contextWindow: LMSTUDIO_JIT_GUESS,
-        note: "context window unknown (older LM Studio) — assuming 4096 to be safe.",
-      }));
+      .map((m: any) => {
+        const llamaCppCtx =
+          typeof m.meta?.n_ctx === "number" && m.meta.n_ctx > 0 ? m.meta.n_ctx : undefined;
+        return {
+          id: m.id as string,
+          backend: "lmstudio" as const,
+          baseUrl: base,
+          contextWindow: llamaCppCtx ?? LMSTUDIO_JIT_GUESS,
+          ...(llamaCppCtx
+            ? {}
+            : { note: "context window unknown (older LM Studio) — assuming 4096 to be safe." }),
+        };
+      });
     return { backend: "lmstudio", baseUrl: base, models };
   }
   return null;
