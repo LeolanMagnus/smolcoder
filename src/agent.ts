@@ -476,7 +476,7 @@ export class Agent {
           if (repeats === 3 || failedCalls === 3) output += "\n[Repeated attempts are not making progress. Inspect the error or relevant file and change your approach before trying again.]";
           let readRepeats = 0;
           let readKey = "";
-          if (["read_file", "search", "list_files"].includes(call.name) && !output.startsWith("Error")) {
+          if (["read_file", "search", "list_files", "web_fetch"].includes(call.name) && !output.startsWith("Error")) {
             if (++readsSinceAction % 12 === 0 && this.mode !== "ro") output += "\n[Investigation checkpoint: record the exact APIs, unresolved error and next small edit with plan checkpoint. Then make and verify that edit before inspecting more modules.]";
             // Match both the request and file/output contents: rereading an
             // edited file or a different line range is legitimate progress.

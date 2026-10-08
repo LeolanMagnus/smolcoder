@@ -67,7 +67,7 @@ The line under the input shows the mode, the model, the reasoning effort, how fu
 | `edit` (default) | read, write, edit | run freely inside the project folder; anything reaching outside it asks you first |
 | `bypass` | read, write, edit | never asks |
 
-File access stops at the project folder. In edit mode, a command that reaches outside it (another folder, your home directory, a global install) asks for approval first and says why. This is a text check on the command, not an operating-system sandbox, so use read-only mode on code you do not trust.
+File access stops at the project folder. In edit mode, a command that reaches outside it (another folder, your home directory, a global install) asks for approval first and says why. This is a text check on the command, not an operating-system sandbox, so use read-only mode on code you do not trust. Fetching a web page (`web_fetch`) is read-only and available in every mode.
 
 ### Options
 
@@ -145,7 +145,7 @@ smolcoder sends your code and prompts to the server you choose, and runs the too
 
 Local models are free and private, but they give you less to work with. The context window is small, generation is slower, and long instructions get lost. smolcoder is built around those limits.
 
-- **It stays out of the model's way.** A short system prompt and eight simple tools (four in read-only mode) leave most of the window for your code.
+- **It stays out of the model's way.** A short system prompt and nine simple tools (five in read-only mode) leave most of the window for your code.
 - **It watches the real window.** It asks the server how much context is actually loaded, shows a meter, and keeps room for the reply. A model that advertises a 128k window is often loaded with 4k, and smolcoder budgets for the 4k.
 - **It tidies up before the window fills.** Old file reads and command output go first. Only then does it ask the model for a short handover. Your request and the checklist are never summarized away.
 - **It keeps the plan outside the conversation.** The to-do list and the notes for the current step live in smolcoder itself, so they survive any summary.

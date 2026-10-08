@@ -240,6 +240,8 @@ export function summarizeArgs(name: string, args: Record<string, any>): string {
         return String(args.path ?? ".");
       case "search":
         return `"${args.pattern}"${args.path ? ` in ${args.path}` : ""}`;
+      case "web_fetch":
+        return String(args.url ?? "");
       case "run_command":
         return String(args.command ?? "");
       case "task":
