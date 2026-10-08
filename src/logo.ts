@@ -22,7 +22,7 @@ export const LOGO_TEXT = LOGO_ROWS.map((r) => r.trimEnd()).join("\n");
 
 /** One-line fallback for wherever the art does not fit. */
 export function plainBrand(version: string): string {
-  return `${c.bold("smol")}${c.dim(c.bold("coder"))} ${c.dim("v" + version)}`;
+  return `${c.bold("smol")}${c.dim(c.bold("coder ENCHANTED"))} ${c.dim("v" + version)}`;
 }
 
 /**
