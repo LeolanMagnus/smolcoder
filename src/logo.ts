@@ -34,7 +34,7 @@ export function terminalLogo(cols: number, version: string): string[] {
   const indent = " ";
   if (cols < indent.length + LOGO_WIDTH) return [plainBrand(version)];
   const tailText = `coder v${version}`;
-  const tail = c.dim(c.bold("coder") + " v" + version);
+  const tail = c.dim(c.bold("coder ENCHANTED") + " v" + version);
   const tailFits = cols >= indent.length + LOGO_WIDTH + 2 + tailText.length;
   const lines = [""];
   LOGO_ROWS.forEach((row, i) => {
