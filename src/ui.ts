@@ -12,6 +12,9 @@ import { c } from "./util";
 export interface AgentUI {
   /** Discard an interrupted streamed response before a safe retry. */
   resetResponse?(): void;
+  /** Progress while a tool call's arguments are streaming (name + chars so
+   * far), so a long file write is visibly "working", not frozen. */
+  toolCallProgress?(name: string, chars: number): void;
   token(text: string): void;
   thinking(text: string): void;
   toolCall(name: string, args: Record<string, any>): void;

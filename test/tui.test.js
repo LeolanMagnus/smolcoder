@@ -83,3 +83,36 @@ test("tui: a long list scrolls with the selection, so rows past the tenth can be
   assert.equal(await p, 15);
   capture(() => tui.close());
 });
+
+test("tui: a streaming tool call shows a live progress indicator, cleared by output", () => {
+  const tui = new Tui();
+  const frame = capture(() => {
+    tui.start();
+    tui.toolCallProgress("write_file", 1200);
+  });
+  assert.match(frame, /write_file/, "the tool being written is named");
+  assert.match(frame, /1\.2k chars/, "the streamed argument size is shown");
+  assert.match(frame, /\d+s/, "elapsed seconds are shown");
+
+  const after = capture(() => {
+    tui.token("done\n");
+    tui.close();
+  });
+  assert.doesNotMatch(after, /write_file/, "real output replaces the indicator");
+});
+
+test("tui: reasoning streams on a live ticker and collapses on content", () => {
+  const tui = new Tui();
+  const frame = capture(() => {
+    tui.start();
+    tui.thinking("weighing the options");
+  });
+  assert.match(frame, /✦/, "reasoning shows the pulse marker");
+  assert.match(frame, /weighing the options/);
+
+  const after = capture(() => {
+    tui.token("answer\n");
+    tui.close();
+  });
+  assert.doesNotMatch(after, /weighing the options/);
+});

@@ -75,6 +75,10 @@ export interface ChatOptions {
   onToken?: (text: string) => void;
   /** Streamed reasoning/thinking text (models that expose it). */
   onThinking?: (text: string) => void;
+  /** Cumulative progress of a streaming tool call: the best-known function
+   * name and the number of argument characters received so far. Backends that
+   * deliver the whole call at once (Ollama) never fire this. */
+  onToolCallProgress?: (p: { name: string; chars: number }) => void;
   signal?: AbortSignal;
   /** Override the session effort for this one call (the compaction
    * summarizer runs with thinking off — a summary is not worth 30s of

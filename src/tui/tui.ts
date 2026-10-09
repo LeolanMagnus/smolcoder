@@ -124,6 +124,8 @@ export class Tui implements SessionUI {
 
   close(): void {
     this.stopSpinner();
+    this.endTicker();
+    this.stopProgress();
     this.hideFrame();
     process.stdout.write("\x1b[?2004l\x1b[?25h");
     process.stdin.setRawMode?.(false);
@@ -596,6 +598,7 @@ export class Tui implements SessionUI {
 
   private out(s: string): void {
     if (this.tickerOn) this.endTicker();
+    this.stopProgress();
     if (this.state !== "hidden") {
       this.hideFrame();
       process.stdout.write(s);
@@ -608,10 +611,25 @@ export class Tui implements SessionUI {
   private thinkBuf = "";
   private thinkStart = 0;
   private tickerOn = false;
+  private tickerTimer: NodeJS.Timeout | null = null;
+  private tickerFrame = 0;
+
+  /** Tool-call argument streaming: a live line so a long file write does not
+   * look like a frozen screen while the model is still decoding. */
+  private progressTimer: NodeJS.Timeout | null = null;
+  private progressActive = false;
+  private progressName = "";
+  private progressChars = 0;
+  private progressStart = 0;
+  private progressFrame = 0;
 
   private ensureLine(): void {
     if (this.tickerOn) {
       this.endTicker();
+      return;
+    }
+    if (this.progressActive) {
+      this.stopProgress();
       return;
     }
     if (!this.atLineStart) {
@@ -628,8 +646,10 @@ export class Tui implements SessionUI {
   }
 
   /** Reasoning streams as ONE grey line, cropped to the latest tail and
-   * overwritten in place — a live pulse, not a wall of text. It collapses to
-   * "✦ thought for Ns" the moment real output starts. */
+   * overwritten in place — a live, ticking pulse. It collapses to
+   * "✦ thought for Ns" the moment real output starts. The line keeps
+   * animating on its own even when reasoning pauses, so a model that has gone
+   * quiet to decode a tool call never looks hung. */
   thinking(text: string): void {
     this.stopSpinner();
     if (this.state !== "hidden") return;
@@ -638,22 +658,79 @@ export class Tui implements SessionUI {
       this.tickerOn = true;
       this.thinkStart = Date.now();
       this.thinkBuf = "";
+      this.tickerTimer = setInterval(() => {
+        if (this.tickerOn) this.renderTicker();
+      }, 100);
     }
     this.thinkBuf += text;
     if (this.thinkBuf.length > 4000) this.thinkBuf = this.thinkBuf.slice(-2000);
+    this.renderTicker();
+  }
+
+  private renderTicker(): void {
+    const frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
     const w = Math.max(20, (process.stdout.columns || 80) - 4);
     const clean = this.thinkBuf.replace(/\s+/g, " ").trim();
-    const tail = clean.length > w ? "…" + clean.slice(-(w - 1)) : clean;
-    process.stdout.write("\r\x1b[2K" + c.gray("✦ " + tail));
+    const secs = Math.floor((Date.now() - this.thinkStart) / 1000);
+    const suffix = ` ${secs}s`;
+    const avail = Math.max(8, w - 2 - suffix.length);
+    const tail = clean.length > avail ? "…" + clean.slice(-(avail - 1)) : clean;
+    const glyph = c.gray(frames[this.tickerFrame++ % frames.length]);
+    process.stdout.write("\r\x1b[2K" + glyph + " " + c.gray("✦ " + tail + suffix));
     this.atLineStart = false;
   }
 
   private endTicker(): void {
+    if (this.tickerTimer) {
+      clearInterval(this.tickerTimer);
+      this.tickerTimer = null;
+    }
     if (!this.tickerOn) return;
     this.tickerOn = false;
     process.stdout.write("\r\x1b[2K");
     this.thinkBuf = "";
     this.atLineStart = true;
+  }
+
+  /** Called as a tool call's arguments stream in: replaces any reasoning line
+   * with a live "writing X · Nk · Ns" indicator until the call completes. */
+  toolCallProgress(name: string, chars: number): void {
+    this.stopSpinner();
+    if (this.state !== "hidden") return;
+    this.endTicker();
+    this.progressName = name;
+    this.progressChars = chars;
+    if (!this.progressActive) {
+      if (!this.atLineStart) {
+        process.stdout.write("\n");
+        this.atLineStart = true;
+      }
+      this.progressActive = true;
+      this.progressStart = Date.now();
+      this.progressTimer = setInterval(() => this.renderProgress(), 100);
+    }
+    this.renderProgress();
+  }
+
+  private renderProgress(): void {
+    const frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+    const secs = Math.floor((Date.now() - this.progressStart) / 1000);
+    const size = this.progressChars >= 1000 ? `${(this.progressChars / 1000).toFixed(1)}k` : String(this.progressChars);
+    const label = `${this.progressName} · ${size} chars · ${secs}s · esc to cancel`;
+    process.stdout.write(`\r${c.cyan(frames[this.progressFrame++ % frames.length])} ${c.dim(label)}   `);
+    this.atLineStart = false;
+  }
+
+  private stopProgress(): void {
+    if (this.progressTimer) {
+      clearInterval(this.progressTimer);
+      this.progressTimer = null;
+    }
+    if (this.progressActive) {
+      process.stdout.write("\r\x1b[2K");
+      this.progressActive = false;
+      this.atLineStart = true;
+    }
   }
 
   toolCall(name: string, args: Record<string, any>): void {

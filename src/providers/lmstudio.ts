@@ -308,6 +308,15 @@ export class LmStudioProvider implements Provider {
           if (tc.function?.arguments) p.args += tc.function.arguments;
           partials.set(idx, p);
         }
+        if (opts.onToolCallProgress) {
+          let name = "";
+          let chars = 0;
+          for (const p of partials.values()) {
+            if (p.name) name = p.name;
+            chars += p.args.length;
+          }
+          opts.onToolCallProgress({ name, chars });
+        }
       }
       if (sawToken) {
         const now = Date.now();

@@ -32,16 +32,21 @@ export function plainBrand(version: string): string {
  */
 export function terminalLogo(cols: number, version: string): string[] {
   const indent = " ";
-  if (cols < indent.length + LOGO_WIDTH) return [plainBrand(version)];
+  // Calculate minimum columns needed for logo + tail
   const tailText = `coder v${version}`;
+  const tailLength = tailText.length;
+  const requiredCols = LOGO_WIDTH + indent.length + 2 + tailLength; // logo width + indent + 2 spaces + tail
+  
+  // Fallback to plain text if terminal is too narrow
+  if (cols < requiredCols) return [plainBrand(version)];
+  
   const tail = c.dim(c.bold("coder ENCHANTED") + " v" + version);
-  const tailFits = cols >= indent.length + LOGO_WIDTH + 2 + tailText.length;
   const lines = [""];
   LOGO_ROWS.forEach((row, i) => {
     const last = i === LOGO_ROWS.length - 1;
-    lines.push(indent + c.cyan(row) + (last && tailFits ? "  " + tail : ""));
+    lines.push(indent + c.cyan(row) + (last ? "  " + tail : ""));
   });
-  if (!tailFits) lines.push(indent + tail);
+  
   lines.push("");
   return lines;
 }

@@ -616,6 +616,7 @@ export class Agent {
           maxTokens: Math.min(this.provider.maxOutputTokens, this.contextBudget().reserve),
           onToken: (t) => { streamed = true; this.ui.token(t); },
           onThinking: (t) => { streamed = true; this.ui.thinking(t); },
+          onToolCallProgress: (p) => this.ui.toolCallProgress?.(p.name || "tool call", p.chars),
         });
       } catch (err: any) {
         if (err?.name === "AbortError" || signal.aborted) throw err;
