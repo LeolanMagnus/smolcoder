@@ -251,6 +251,49 @@ export class ContextManager {
   }
 
   /**
+   * Collapse completed write_file/edit_file payloads in assistant tool-call
+   * groups at indexes [from, to] (inclusive, oldest..newest) into marked
+   * harness history records. The removed calls are dropped entirely — never a
+   * placeholder left in executable arguments — and their receipts ride along
+   * in a synthetic user note, so the model sees "what ran" without the bodies.
+   * Tool results that remain keep their adjacency to the assistant message.
+   * Returns true when anything was removed. Used by tier-2 compaction (old
+   * groups) and eagerly after a successful write (the newest group).
+   */
+  collapseCompletedWrites(messages: Msg[], from: number, to: number): boolean {
+    let any = false;
+    for (let i = to; i >= from; i--) {
+      const message = messages[i];
+      if (!message.toolCalls?.length) continue;
+      const results: Msg[] = [];
+      for (let j = i + 1; j < messages.length && messages[j].role === "tool"; j++) results.push(messages[j]);
+      const removed = new Set<string>();
+      const receipts: string[] = [];
+      for (const call of message.toolCalls) {
+        const receipt = results.find((m) => m.toolCallId === call.id);
+        if (!receipt || !/^(Created|Overwrote|Edited) /.test(receipt.content)) continue;
+        const keys = call.name === "write_file" ? ["content"] : call.name === "edit_file" ? ["old_text", "new_text"] : [];
+        if (!keys.some((key) => typeof call.args[key] === "string" &&
+          (call.args[key].length > 1200 || isHistoryPlaceholder(call.args[key])))) continue;
+        removed.add(call.id);
+        receipts.push(`${call.name}: ${truncateEnd(receipt.content, 600)}`);
+      }
+      if (!removed.size) continue;
+      any = true;
+      const remainingCalls = message.toolCalls.filter((call) => !removed.has(call.id));
+      const retained: Msg[] = remainingCalls.length
+        ? [{ ...message, toolCalls: remainingCalls }, ...results.filter((result) => !removed.has(result.toolCallId!))]
+        : message.content ? [{ role: "assistant", content: message.content }] : [];
+      messages.splice(i, results.length + 1, ...retained, {
+        role: "user", historyNote: true,
+        content: `[Harness history record — earlier tool executions, not a new request. Applied code omitted; read_file returns current source. Future changes require actual tool calls.]\n${receipts.join("\n")}`,
+      });
+      this.resetAnchor();
+    }
+    return any;
+  }
+
+  /**
    * Bring the transcript back under budget. Mutates and/or replaces `messages`;
    * returns the (possibly new) array plus a report for the UI.
    */
@@ -301,33 +344,7 @@ export class ContextManager {
     for (let i = messages.length - 1; i >= 1; i--) {
       if (messages[i].role === "assistant" && messages[i].toolCalls?.length) { latestGroup = i; break; }
     }
-    for (let i = latestGroup - 1; i >= 1; i--) {
-      const message = messages[i];
-      if (!message.toolCalls) continue;
-      const results: Msg[] = [];
-      for (let j = i + 1; j < messages.length && messages[j].role === "tool"; j++) results.push(messages[j]);
-      const removed = new Set<string>();
-      const receipts: string[] = [];
-      for (const call of message.toolCalls) {
-        const receipt = results.find((m) => m.toolCallId === call.id);
-        if (!receipt || !/^(Created|Overwrote|Edited) /.test(receipt.content)) continue;
-        const keys = call.name === "write_file" ? ["content"] : call.name === "edit_file" ? ["old_text", "new_text"] : [];
-        if (!keys.some((key) => typeof call.args[key] === "string" &&
-          (call.args[key].length > 1200 || isHistoryPlaceholder(call.args[key])))) continue;
-        removed.add(call.id);
-        receipts.push(`${call.name}: ${truncateEnd(receipt.content, 600)}`);
-      }
-      if (!removed.size) continue;
-      const remainingCalls = message.toolCalls.filter((call) => !removed.has(call.id));
-      const retained: Msg[] = remainingCalls.length
-        ? [{ ...message, toolCalls: remainingCalls }, ...results.filter((result) => !removed.has(result.toolCallId!))]
-        : message.content ? [{ role: "assistant", content: message.content }] : [];
-      messages.splice(i, results.length + 1, ...retained, {
-        role: "user", historyNote: true,
-        content: `[Harness history record — earlier tool executions, not a new request. Applied code omitted; read_file returns current source. Future changes require actual tool calls.]\n${receipts.join("\n")}`,
-      });
-      this.resetAnchor();
-    }
+    this.collapseCompletedWrites(messages, 1, latestGroup - 1);
 
     // Tier 1b: evict old tool-result bodies, oldest first.
     const evictBoundary = Math.max(1, messages.length - EVICT_KEEP_RECENT);

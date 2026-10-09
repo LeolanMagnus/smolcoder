@@ -61,7 +61,7 @@ The input budget includes instructions, tool schemas, requests and history. Back
 
 ### Compaction in stages
 
-Large obsolete file reads are replaced with stubs after a successful edit or write. Before a subsequent model request, context management normally starts above **80% of the usable input budget**. A completed, valid background handover can be reused immediately; otherwise older reasoning, completed write payloads and old tool output are removed before asking the model to summarize. Completed writes become marked harness history records, with no placeholder code in executable tool arguments or fabricated assistant answers. The newest tool group is protected. If the remaining content cannot shrink further, repeated futile summaries are suppressed while the final fit check stays active.
+Large obsolete file reads are replaced with stubs after a successful edit or write. A completed write's payload is collapsed to a harness history record the moment it lands on disk, not only under pressure: the code is on disk and `read_file` returns its current source, so a single large `write_file` cannot flood a small window. Payloads under about 1,200 characters and non-write calls are left in the transcript. Before a subsequent model request, context management normally starts above **80% of the usable input budget**. A completed, valid background handover can be reused immediately; otherwise older reasoning, completed write payloads and old tool output are removed before asking the model to summarize. Completed writes become marked harness history records, with no placeholder code in executable tool arguments or fabricated assistant answers. The newest tool group is protected. If the remaining content cannot shrink further, repeated futile summaries are suppressed while the final fit check stays active.
 
 ```mermaid
 flowchart TD
@@ -122,7 +122,7 @@ This can hide summary latency behind a long command without requiring a second m
 
 ## Planning that survives compaction
 
-Multi-step work uses a checklist owned by the harness. It contains up to 20 steps, each with text, a completion flag and an optional working checkpoint. The harness derives the current step as the first unfinished one. Compaction can replace the conversation while this state remains intact. The prompt asks for runnable increments: wire an entry point and verify it before expanding the application.
+Multi-step work uses a checklist owned by the harness. It contains up to 20 steps, each with text, a completion flag and an optional working checkpoint. Step text is capped at 200 characters so the checklist stays cheap to re-inject; exact APIs and error text belong in a checkpoint. The harness derives the current step as the first unfinished one. Compaction can replace the conversation while this state remains intact. The prompt asks for runnable increments: wire an entry point and verify it before expanding the application.
 
 ```mermaid
 flowchart TD
@@ -143,7 +143,7 @@ To advance, it calls the same `plan` tool with `{"action":"done"}`. The harness 
 
 During an investigation, `{"action":"checkpoint","text":"save.js exports makeSaver(storage, size); next: replace missing imports"}` replaces the current step's notes, up to 1,000 characters. The checkpoint is kept verbatim in plan state and re-injected with the active step, so an exact interface need not be repeatedly reconstructed by the summarizer. Completed-step notes remain in stored state but leave the active prompt. After a long sequence of reads, the agent receives a reminder to record its findings and make a small, verifiable edit.
 
-That small contract is the optimization: no nested step objects, no status vocabulary to regenerate, and no need to rewrite the full plan on every completion. UI rendering adds no inference call; tool arguments, feedback and the model-facing checklist still use tokens. After four non-plan tool calls with unfinished work, a short reminder is attached to the tool result. A premature final answer can receive a bounded continuation nudge.
+That small contract is the optimization: no nested step objects, no status vocabulary to regenerate, and no need to rewrite the full plan on every completion. UI rendering adds no inference call; tool arguments, feedback and the model-facing checklist still use tokens. After four non-plan tool calls with unfinished work, a short reminder is attached to the tool result. When a clear multi-step run has no plan at all, one reminder to create one is attached after six tool calls, once per turn; any `plan` call disarms it. A premature final answer can receive a bounded continuation nudge.
 
 The complete checklist survives compaction in both interfaces. Web session snapshots also save it for restart/resume; terminal sessions keep it for the running session. Its representation in a handover shares a capped facts budget, so very long step text can be shortened there while the underlying checklist remains available through `plan` / `/plan`.
 

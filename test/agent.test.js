@@ -159,6 +159,35 @@ test("turn stats accumulate tokens, speed and tool calls", async () => {
   assert.match(ui.lines.find((l) => l.startsWith("END ")), /1 tool · 250 tok @ 83 tok\/s/);
 });
 
+test("a multi-step run with no plan gets one reminder to create one", async () => {
+  const reads = Array.from({ length: 6 }, (_, i) => ({
+    content: "", toolCalls: [{ id: `r${i}`, name: "read_file", args: { path: `mod${i}.txt` } }],
+  }));
+  const provider = scriptedProvider([...reads, { content: "done", toolCalls: [] }]);
+  const agent = makeAgent(provider, fakeUi());
+  for (let i = 0; i < 6; i++) fs.writeFileSync(path.join(agent.toolCtx.workspace, `mod${i}.txt`), `module ${i}`);
+  await agent.runTurn("wire up a multi-step feature");
+  // The reminder rides on the 6th tool result, so the request after it carries it.
+  const afterSixth = provider.seen[6];
+  assert.ok(afterSixth, "the model asked again after the sixth tool call");
+  const reminders = afterSixth.filter((m) => m.role === "tool" && /no plan is set/.test(m.content));
+  assert.equal(reminders.length, 1);
+  assert.match(reminders[0].content, /plan \{"action": "set"/);
+});
+
+test("the create-plan reminder is not repeated across the turn", async () => {
+  const calls = Array.from({ length: 8 }, (_, i) => ({
+    content: "", toolCalls: [{ id: `r${i}`, name: "read_file", args: { path: `mod${i}.txt` } }],
+  }));
+  const provider = scriptedProvider([...calls, { content: "done", toolCalls: [] }]);
+  const agent = makeAgent(provider, fakeUi());
+  for (let i = 0; i < 8; i++) fs.writeFileSync(path.join(agent.toolCtx.workspace, `mod${i}.txt`), `module ${i}`);
+  await agent.runTurn("wire up a multi-step feature");
+  const last = provider.seen.at(-1);
+  const total = last.filter((m) => m.role === "tool" && /no plan is set/.test(m.content)).length;
+  assert.equal(total, 1, "exactly one reminder in the transcript");
+});
+
 test("edit mode: an in-workspace command runs without asking", async () => {
   const provider = scriptedProvider([
     { content: "", toolCalls: [{ id: "c1", name: "run_command", args: { command: "echo hello-from-tree" } }] },

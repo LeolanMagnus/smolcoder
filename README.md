@@ -148,8 +148,8 @@ Local models are free and private, but they give you less to work with. The cont
 
 - **It stays out of the model's way.** A short system prompt and nine simple tools (five in read-only mode) leave most of the window for your code.
 - **It watches the real window.** It asks the server how much context is actually loaded, shows a meter, and keeps room for the reply. A model that advertises a 128k window is often loaded with 4k, and smolcoder budgets for the 4k.
-- **It tidies up before the window fills.** Old file reads and command output go first. Only then does it ask the model for a short handover. Your request and the checklist are never summarized away.
-- **It keeps the plan outside the conversation.** The to-do list and the notes for the current step live in smolcoder itself, so they survive any summary.
+- **It tidies up as it goes, not just before the window fills.** Once a large file is written, its body is dropped from the conversation immediately — the code is on disk and can be re-read. Old file reads and command output are cleared next. Only then does it ask the model for a short handover. Your request and the checklist are never summarized away.
+- **It keeps the plan outside the conversation.** The to-do list and the notes for the current step live in smolcoder itself, so they survive any summary. If a long run has no plan, the agent is reminded once to make one; step text is kept short.
 - **It uses the waiting time.** While a long command runs, the same model can prepare that handover in the background. Coding always comes first.
 - **It recovers from hiccups.** A stalled stream, a cut-off reply or a tool call that keeps failing gets retried or stopped with a clear message.
 

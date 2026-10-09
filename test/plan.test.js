@@ -28,7 +28,7 @@ assert.equal(plan.steps.length,2);
     assert.equal(p.steps[0].done, true);
     assert.ok(p.steps[0].durationMs !== undefined && p.steps[0].durationMs >= 0);
     const after = p.steps[1].startedAt;
-    if (after !== undefined) assert.ok(after >= p.steps[0].startedAt!);
+    if (after !== undefined) assert.ok(after >= p.steps[0].startedAt);
   });
 
 test('working checkpoints survive a JSON session round trip and do not complete a step', () => {
@@ -47,4 +47,31 @@ test('working checkpoints survive a JSON session round trip and do not complete 
   restored.markDone();
   assert.doesNotMatch(restored.modelView(), /replacement checkpoint/);
   assert.equal(restored.steps[0].note, 'replacement checkpoint');
+});
+
+test('overlong steps are capped so the checklist stays cheap in a small window', () => {
+  const p = new Plan();
+  p.set('words '.repeat(80));
+  assert.ok(p.steps[0].text.length <= 201, `capped, got ${p.steps[0].text.length}`);
+  assert.match(p.steps[0].text, /…$/);
+  assert.ok(p.steps[0].text.length < 'words '.repeat(80).length);
+
+  const p2 = new Plan();
+  p2.set('A\n' + 'z'.repeat(300));
+  assert.equal(p2.steps[1].text.length, 201, 'two-hundred plus ellipsis');
+  assert.doesNotMatch(p2.modelView(), /z{250}/, 'model view never carries the blob');
+
+  const p3 = new Plan();
+  p3.set('x');
+  const added = p3.add('long note ' + 'y'.repeat(300));
+  assert.equal(p3.steps[1].text.length, 201);
+  assert.ok(added.length < 250, 'confirmation message stays short too');
+  assert.ok(p3.pendingSummary().length <= 202 * 2);
+});
+
+test('short steps keep punctuation and code intact (cap only trims the overlong)', () => {
+  const p = new Plan();
+  p.set('Inspect foo(); preserve API\nRun tests');
+  assert.equal(p.steps[0].text, 'Inspect foo(); preserve API');
+  assert.equal(p.steps[1].text, 'Run tests');
 });

@@ -55,6 +55,9 @@ export class Agent {
   originalRequest = "";
   currentRequest = "";
   private planNudged = false;
+  /** One-shot per turn: reminded the model to CREATE a plan when it has not
+   * yet engaged the plan tool but the loop is clearly multi-step. */
+  private planCreateNudged = false;
   private abort: AbortController | null = null;
   /** Speed/size figures for the last completed turn (for the turn-end label
    * and headless stats). */
@@ -107,6 +110,7 @@ export class Agent {
     this.originalRequest = "";
     this.currentRequest = "";
     this.planNudged = false;
+    this.planCreateNudged = false;
     this.outcome = "idle";
     this.lastError = null;
     this.verificationResult = null;
@@ -128,6 +132,7 @@ export class Agent {
     this.originalRequest = originalRequest;
     this.currentRequest = currentRequest;
     this.planNudged = false;
+    this.planCreateNudged = false;
     this.ctxMgr.resetAnchor();
     this.repairTranscript("[Tool execution was interrupted by a restart. Its outcome is unknown. Inspect files or command state before retrying; do not assume it failed or rerun it blindly.]");
   }
@@ -252,6 +257,7 @@ export class Agent {
     this.verification = this.callerVerification;
     this.progressFailure = "";
     this.sameVerificationFailures = 0;
+    this.planCreateNudged = false;
     // Earlier user decisions may exist only in a previous turn's summary.
     // Only a fresh conversation can safely discard every old narrative.
     this.canRefreshVerification = !this.originalRequest && this.messages.length === 1;
@@ -467,6 +473,11 @@ export class Agent {
               sincePlanUpdate = 0;
               const cur = plan.steps[plan.currentIndex];
               output += `\n[Reminder: the plan still shows step ${plan.currentIndex + 1} "${cur.text}" as current. If you have finished steps, mark each with plan {"action": "done"} now.]`;
+            } else if (!plan.exists && this.mode !== "ro" && !this.planCreateNudged && toolCallsThisTurn >= 6) {
+              // The model is clearly on a multi-step task but never created a
+              // plan. One reminder only; any plan call disarms it for the turn.
+              this.planCreateNudged = true;
+              output += `\n[Reminder: this task spans several steps and no plan is set. Create a short plan of runnable increments now with plan {"action": "set", "steps": "wire the entry point\\nrun the build\\ntest it"} so progress survives compaction.]`;
             }
           }
 
@@ -548,6 +559,20 @@ export class Agent {
           }
           if (readRepeats >= 5) throw new Error("Paused after repeatedly reading the same unchanged data without an edit. Progress is kept. Ask for a specific next change, read a different range, or use a larger context window.");
           if (repeats >= 6 || failedCalls >= 6) throw new Error("Paused after repeated tool attempts made no progress. Progress is kept; inspect the error, change the request or model, then continue.");
+        }
+        // The write is on disk and its receipt recorded: collapse the applied
+        // body now instead of waiting for compaction, so one large file write
+        // cannot flood a small window. Runs after the whole batch so tool
+        // results stay adjacent to their assistant message. Small payloads and
+        // non-write calls are left untouched.
+        if (wroteThisTurn) {
+          for (let i = this.messages.length - 1; i >= 1; i--) {
+            const m = this.messages[i];
+            if (m.role === "assistant" && m.toolCalls?.length) {
+              this.ctxMgr.collapseCompletedWrites(this.messages, i, i);
+              break;
+            }
+          }
         }
         // A model can cycle through different reads and small API edits forever
         // without triggering an identical-call guard. Periodic executable

@@ -61,6 +61,51 @@ test("old successful write payloads are evicted without summarizing or changing 
   assert.equal(result.messages.at(-1).content,'fresh reference '.repeat(200));
 });
 
+test("collapseCompletedWrites collapses the newest successful write group eagerly", () => {
+  const cm = new ContextManager(4096,1024);
+  const body = 'saved code '.repeat(200); // >1200 chars: on-disk, safe to drop
+  const calls = [{ id: 'w', name: 'write_file', args: { path: 'a.js', content: body } }];
+  const msgs = [{ role: 'system', content: 'sys' }, { role: 'user', content: 'build' },
+    { role: 'assistant', content: '', toolCalls: calls },
+    { role: 'tool', toolCallId: 'w', content: 'Created a.js (100 lines).' }];
+  assert.equal(cm.collapseCompletedWrites(msgs, 2, 2), true);
+  assert.equal(msgs.length, 3, 'assistant+result collapse into one history note');
+  assert.equal(msgs[2].role, 'user');
+  assert.equal(msgs[2].historyNote, true);
+  assert.match(msgs[2].content, /write_file: Created a\.js/);
+  assert.equal(msgs.some((m) => m.toolCallId === 'w'), false, 'removed call is gone entirely');
+  assert.equal(calls[0].args.content, body, 'UI/audit references keep their original call');
+});
+
+test("collapseCompletedWrites on a mixed newest group keeps remaining results adjacent", () => {
+  const cm = new ContextManager(4096,1024);
+  const body = 'applied '.repeat(300);
+  const calls = [
+    { id: 'w', name: 'write_file', args: { path: 'a.js', content: body } },
+    { id: 'r', name: 'read_file', args: { path: 'b.js' } },
+  ];
+  const msgs = [{ role: 'system', content: 'sys' }, { role: 'user', content: 'build' },
+    { role: 'assistant', content: '', toolCalls: calls },
+    { role: 'tool', toolCallId: 'w', content: 'Created a.js (100 lines).' },
+    { role: 'tool', toolCallId: 'r', content: 'reference source' }];
+  cm.collapseCompletedWrites(msgs, 2, 2);
+  assert.deepEqual(msgs[2].toolCalls.map((c) => c.id), ['r'], 'only the write call is removed');
+  assert.equal(msgs[3].role, 'tool', 'the read result stays adjacent to its assistant');
+  assert.equal(msgs[3].toolCallId, 'r');
+  assert.equal(msgs[4].historyNote, true);
+  assert.equal(msgs[4].role, 'user');
+  assert.match(msgs[4].content, /write_file: Created a\.js/);
+});
+
+test("collapseCompletedWrites leaves small writes in place", () => {
+  const cm = new ContextManager(4096,1024);
+  const msgs = [{ role: 'system', content: 'sys' }, { role: 'user', content: 'x' },
+    { role: 'assistant', content: '', toolCalls: [{ id: 'w', name: 'write_file', args: { path: 'a.js', content: 'tiny' } }] },
+    { role: 'tool', toolCallId: 'w', content: 'Created a.js (1 lines).' }];
+  assert.equal(cm.collapseCompletedWrites(msgs, 2, 2), false);
+  assert.equal(msgs.length, 4);
+});
+
 test("handover command records retain recent outcomes without copying whole inline programs", async () => {
   const cm = new ContextManager(8192,2048);
   const commands = Array.from({length:9},(_,i)=>`node -e "${'inline code '.repeat(600)}" check-${i} -> [exit code ${i%2}]`);

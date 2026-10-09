@@ -4,6 +4,14 @@
 // small model it works as a compass: every `done` result re-states what comes
 // next, and after compaction the whole checklist is re-injected verbatim.
 
+/** A step longer than this gets cut: the checklist is a compass for a small
+ * window, not a place to stash paragraphs. Exact APIs belong in checkpoints. */
+const PLAN_STEP_MAX_CHARS = 200;
+
+function capStep(text: string): string {
+  return text.length > PLAN_STEP_MAX_CHARS ? text.slice(0, PLAN_STEP_MAX_CHARS).trimEnd() + "…" : text;
+}
+
 export interface PlanStep {
   text: string;
   done: boolean;
@@ -50,6 +58,7 @@ export class Plan {
       .split(stepsText.includes("\n") ? "\n" : /;\s*/)
       .map((l) => l.replace(/^\s*(?:[-*]|\d+[.)])?\s*(?:\[.\]\s*)?/, "").trim())
       .filter(Boolean)
+      .map(capStep)
       .slice(0, 20);
     if (lines.length === 0) {
       return 'Error: steps is required — one step per line. Example: {"action": "set", "steps": "create index.html\\ncreate game.js\\ntest the page"}';
@@ -88,9 +97,10 @@ export class Plan {
       return 'Error: text is required. Example: {"action": "add", "text": "fix the collision bug"}';
     }
     if (this.steps.length >= 20) return "Error: the plan already has 20 steps — finish some first.";
-    this.steps.push({ text: text.trim(), done: false });
+    const step = capStep(text.trim());
+    this.steps.push({ text: step, done: false });
     this.startCurrent();
-    return `Added step ${this.steps.length}: ${text.trim()}`;
+    return `Added step ${this.steps.length}: ${step}`;
   }
 
   checkpoint(text: string): string {
