@@ -40,6 +40,7 @@ Type what you want done and press enter. The agent reads files, edits them and r
 |---|---|
 | `/` | Opens the command menu |
 | `shift+tab` | Cycles the permission mode: read-only, edit, bypass |
+| `ctrl+o` | Expands or collapses the plan checklist |
 | `esc` | Cancels the running turn, or clears the input |
 | `ctrl+c` twice | Quits |
 

@@ -143,6 +143,7 @@ ${c.bold("Options:")}
 ${c.bold("Keys:")}
   shift+tab   cycle mode (read-only → edit → bypass permissions)
   /           slash commands (autocomplete menu)
+  ctrl+o      expand/collapse the plan checklist
   esc         cancel a running turn · clear the input
   ctrl+c ×2   quit
 

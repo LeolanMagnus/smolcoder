@@ -101,6 +101,31 @@ test("tui: a streaming tool call shows a live progress indicator, cleared by out
   assert.doesNotMatch(after, /write_file/, "real output replaces the indicator");
 });
 
+test("tui: the plan shows collapsed and expands on ctrl+o", () => {
+  const tui = new Tui();
+  const plan = {
+    steps: [{ text: "wire entry" }, { text: "add movement" }, { text: "run build" }],
+    currentIndex: 0,
+    doneCount: 0,
+  };
+  tui.start();
+  tui.planUpdated(plan);
+  const collapsed = capture(() => {
+    tui.readInput();
+  });
+  assert.match(collapsed, /Plan 0\/3/, "the collapsed header shows progress");
+  assert.match(collapsed, /wire entry/, "the current step is shown");
+  assert.doesNotMatch(collapsed, /add movement/, "the checklist is hidden while collapsed");
+
+  const expanded = capture(() => keys("\x0f")); // ctrl+o
+  assert.match(expanded, /add movement/, "ctrl+o reveals the full checklist");
+  assert.match(expanded, /run build/);
+
+  const recollapsed = capture(() => keys("\x0f"));
+  assert.doesNotMatch(recollapsed, /add movement/, "ctrl+o collapses it again");
+  capture(() => tui.close());
+});
+
 test("tui: reasoning streams on a live ticker and collapses on content", () => {
   const tui = new Tui();
   const frame = capture(() => {

@@ -22,7 +22,8 @@ export type KeyType =
   | "ctrlu"
   | "ctrlw"
   | "ctrla"
-  | "ctrle";
+  | "ctrle"
+  | "ctrlo";
 
 export interface Key {
   type: KeyType;
@@ -109,6 +110,7 @@ export class KeyDecoder {
       if (code === 4) { out.push({ type: "ctrld" }); i++; continue; }
       if (code === 21) { out.push({ type: "ctrlu" }); i++; continue; }
       if (code === 23) { out.push({ type: "ctrlw" }); i++; continue; }
+      if (code === 15) { out.push({ type: "ctrlo" }); i++; continue; }
       if (code === 1) { out.push({ type: "ctrla" }); i++; continue; }
       if (code === 5) { out.push({ type: "ctrle" }); i++; continue; }
       if (code < 32) { i++; continue; } // other control chars: ignore

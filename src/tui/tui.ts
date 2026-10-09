@@ -8,7 +8,7 @@
 
 import { Plan } from "../plan";
 import { ThemeMode } from "../theme";
-import { SelectOption, SessionUI, SlashCommand, summarizeArgs } from "../ui";
+import { renderPlan, SelectOption, SessionUI, SlashCommand, summarizeArgs } from "../ui";
 import { c, fmtDuration, useColor } from "../util";
 import { LineEditor, layoutBuffer } from "./editor";
 import { StreamHighlighter } from "./highlight";
@@ -81,6 +81,10 @@ export class Tui implements SessionUI {
   private lastMenuFilter: string | null = null;
   private notice: string | null = null;
   private lastCtrlC = 0;
+  /** Latest harness plan (reference, so /clear's plan.reset() is reflected)
+   * and whether its full checklist is expanded in the idle frame. */
+  private lastPlan: Plan | null = null;
+  private planOpen = false;
   private submitResolve: ((s: string) => void) | null = null;
   private sel: {
     title: string;
@@ -261,6 +265,9 @@ export class Tui implements SessionUI {
         break;
       case "ctrlw":
         this.ed.deleteWordBack();
+        break;
+      case "ctrlo":
+        this.planOpen = !this.planOpen;
         break;
       case "up":
         if (menu.length > 0) {
@@ -498,6 +505,20 @@ export class Tui implements SessionUI {
 
     if (this.state === "idle") {
       const w = this.width();
+      if (this.lastPlan && this.lastPlan.steps.length) {
+        const p = this.lastPlan;
+        const cur = p.currentIndex >= 0 ? p.steps[p.currentIndex].text : "complete";
+        const toggle = this.planOpen ? "(ctrl+o to collapse)" : "(ctrl+o to expand)";
+        lines.push(truncateVisible(
+          ` ${c.bold(this.planOpen ? "⌄" : "›")} ${c.bold(`Plan ${p.doneCount}/${p.steps.length}`)} ${c.dim("· " + cur)} ${c.dim(toggle)}`,
+          w
+        ));
+        if (this.planOpen) {
+          for (const row of renderPlan(p, "  ").split("\n").slice(1)) {
+            lines.push(truncateVisible(row, w));
+          }
+        }
+      }
       const menu = this.menuEntries();
       const menuW = Math.min(w, 64);
       for (let i = 0; i < menu.length; i++) {
@@ -807,8 +828,9 @@ export class Tui implements SessionUI {
     this.stopSpinner();
     this.ensureLine();
     this.lastKind = null;
+    this.lastPlan = plan; // reference: reflects plan.reset() on /clear
     const current = plan.currentIndex >= 0 ? plan.steps[plan.currentIndex].text : "complete";
-    this.out(c.dim(`  Plan ${plan.doneCount}/${plan.steps.length} · ${current}`) + "\n");
+    this.out(c.dim(`  Plan ${plan.doneCount}/${plan.steps.length} · ${current}  (ctrl+o to expand)`) + "\n");
     this.atLineStart = true;
   }
 
