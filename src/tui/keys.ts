@@ -16,6 +16,8 @@ export type KeyType =
   | "right"
   | "home"
   | "end"
+  | "pgup"
+  | "pgdn"
   | "esc"
   | "ctrlc"
   | "ctrld"
@@ -23,11 +25,21 @@ export type KeyType =
   | "ctrlw"
   | "ctrla"
   | "ctrle"
-  | "ctrlo";
+  | "mouse";
+
+/** A decoded SGR mouse event. `code` is the raw button code (bit 6 set for
+ * wheel), `x`/`y` are 1-based cell coordinates, `release` is the "m" suffix. */
+export interface Mouse {
+  code: number;
+  x: number;
+  y: number;
+  release: boolean;
+}
 
 export interface Key {
   type: KeyType;
   text?: string;
+  mouse?: Mouse;
 }
 
 const CSI_MAP: Record<string, KeyType> = {
@@ -41,6 +53,8 @@ const CSI_MAP: Record<string, KeyType> = {
   "1~": "home",
   "3~": "delete",
   "4~": "end",
+  "5~": "pgup",
+  "6~": "pgdn",
   "7~": "home",
   "8~": "end",
 };
@@ -86,6 +100,17 @@ export class KeyDecoder {
           while (j < s.length && !(s[j] >= "@" && s[j] <= "~")) j++;
           if (j >= s.length) break; // incomplete sequence — drop
           const seq = s.slice(i + 2, j + 1);
+          if (seq[0] === "<") {
+            const m = /^<(\d+);(\d+);(\d+)([Mm])$/.exec(seq);
+            if (m) {
+              out.push({
+                type: "mouse",
+                mouse: { code: Number(m[1]), x: Number(m[2]), y: Number(m[3]), release: m[4] === "m" },
+              });
+            }
+            i = j + 1;
+            continue;
+          }
           const mapped = CSI_MAP[seq];
           if (mapped) out.push({ type: mapped });
           i = j + 1;
@@ -110,7 +135,6 @@ export class KeyDecoder {
       if (code === 4) { out.push({ type: "ctrld" }); i++; continue; }
       if (code === 21) { out.push({ type: "ctrlu" }); i++; continue; }
       if (code === 23) { out.push({ type: "ctrlw" }); i++; continue; }
-      if (code === 15) { out.push({ type: "ctrlo" }); i++; continue; }
       if (code === 1) { out.push({ type: "ctrla" }); i++; continue; }
       if (code === 5) { out.push({ type: "ctrle" }); i++; continue; }
       if (code < 32) { i++; continue; } // other control chars: ignore

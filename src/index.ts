@@ -143,7 +143,7 @@ ${c.bold("Options:")}
 ${c.bold("Keys:")}
   shift+tab   cycle mode (read-only → edit → bypass permissions)
   /           slash commands (autocomplete menu)
-  ctrl+o      expand/collapse the plan checklist
+  click       expand/collapse a tool call or the plan checklist
   esc         cancel a running turn · clear the input
   ctrl+c ×2   quit
 
@@ -174,11 +174,6 @@ function installSignalCleanup(cleanup: () => void): void {
   process.on("SIGTERM", () => run(143));
   process.on("SIGHUP", () => run(129));
   process.on("SIGINT", () => run(130));
-}
-
-/** The SMOL banner that opens every interactive session. */
-function printLogo(): void {
-  for (const line of terminalLogo(process.stdout.columns || 80, VERSION)) console.log(line);
 }
 
 function prefsOf(args: CliArgs): SessionPrefs {
@@ -292,7 +287,6 @@ async function runInteractive(args: CliArgs): Promise<void> {
     process.exit(1);
   }
 
-  printLogo();
   const cfg = loadConfig();
   process.stdout.write(c.dim("· looking for Ollama and LM Studio…"));
   let chosen = await prepareModel(prefsOf(args), cfg, (label) => {
@@ -301,6 +295,9 @@ async function runInteractive(args: CliArgs): Promise<void> {
   process.stdout.write("\r\x1b[2K");
 
   const tui = new Tui(await resolveMode(cfg.theme));
+  // The banner lives inside the transcript, so it stays visible on the
+  // alternate screen instead of being wiped when the TUI takes over.
+  tui.banner = terminalLogo(process.stdout.columns || 80, VERSION);
   if (!chosen) {
     // Nothing on this computer: open the TUI early and offer to look on the
     // network. Until a session exists, esc/ctrl+c while it searches quits.

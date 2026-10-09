@@ -101,7 +101,10 @@ test("tui: a streaming tool call shows a live progress indicator, cleared by out
   assert.doesNotMatch(after, /write_file/, "real output replaces the indicator");
 });
 
-test("tui: the plan shows collapsed and expands on ctrl+o", () => {
+// A left-button press at 1-based cell (x, y), as an SGR mouse report.
+const click = (y, x = 3) => keys(`\x1b[<0;${x};${y}M`);
+
+test("tui: the plan shows collapsed and expands on a mouse click", () => {
   const tui = new Tui();
   const plan = {
     steps: [{ text: "wire entry" }, { text: "add movement" }, { text: "run build" }],
@@ -117,12 +120,28 @@ test("tui: the plan shows collapsed and expands on ctrl+o", () => {
   assert.match(collapsed, /wire entry/, "the current step is shown");
   assert.doesNotMatch(collapsed, /add movement/, "the checklist is hidden while collapsed");
 
-  const expanded = capture(() => keys("\x0f")); // ctrl+o
-  assert.match(expanded, /add movement/, "ctrl+o reveals the full checklist");
+  const expanded = capture(() => click(1));
+  assert.match(expanded, /add movement/, "clicking the header reveals the full checklist");
   assert.match(expanded, /run build/);
 
-  const recollapsed = capture(() => keys("\x0f"));
-  assert.doesNotMatch(recollapsed, /add movement/, "ctrl+o collapses it again");
+  const recollapsed = capture(() => click(1));
+  assert.doesNotMatch(recollapsed, /add movement/, "clicking again collapses it");
+  capture(() => tui.close());
+});
+
+test("tui: a tool call expands on a click to its result summary", () => {
+  const tui = new Tui();
+  tui.start();
+  tui.toolCall("read_file", { path: "src/app.ts" });
+  tui.toolResult("export const x = 1;\nline2\nline3", 12);
+  const collapsed = capture(() => tui.readInput());
+  assert.match(collapsed, /read_file/, "the tool name is shown");
+  assert.match(collapsed, /src\/app\.ts/, "the argument summary is shown");
+  assert.doesNotMatch(collapsed, /\(\+2 lines\)/, "the result summary is hidden while collapsed");
+
+  const expanded = capture(() => click(1));
+  assert.match(expanded, /\(\+2 lines\)/, "the result summary appears when expanded");
+  assert.match(expanded, /12ms/, "the duration appears with the summary");
   capture(() => tui.close());
 });
 

@@ -1,18 +1,16 @@
-// The inline TUI, styled after opencode: an accent-bar input block with the
-// session status (mode · model · effort · ctx) inside it, a slash-command menu
-// that opens above the input as you type "/", arrow-key pickers with
-// type-to-filter, and shift+tab mode cycling. Hand-rolled ANSI, zero deps.
-//
-// The frame (input block + menus) exists only while waiting for input; while
-// the agent runs, output streams plainly and scrolls naturally.
+// The interactive TUI. A full-screen (alternate buffer) view: a retained
+// transcript on top and the input frame docked at the bottom. Tool calls and
+// the plan are collapsible — click a block's header with the mouse to expand
+// it — mirroring how tool responses behave in opencode. Hand-rolled ANSI,
+// zero deps.
 
 import { Plan } from "../plan";
 import { ThemeMode } from "../theme";
-import { renderPlan, SelectOption, SessionUI, SlashCommand, summarizeArgs } from "../ui";
-import { c, fmtDuration, useColor } from "../util";
+import { SelectOption, SessionUI, SlashCommand, summarizeArgs } from "../ui";
+import { c, fmtDuration } from "../util";
 import { LineEditor, layoutBuffer } from "./editor";
-import { StreamHighlighter } from "./highlight";
-import { Key, KeyDecoder } from "./keys";
+import { Key, KeyDecoder, Mouse } from "./keys";
+import { Block, paintDiff, Transcript, truncateVisible, visLen } from "./render";
 
 type State = "hidden" | "idle" | "select" | "confirm" | "prompt";
 
@@ -25,31 +23,6 @@ const BAR = `${ACCENT}▌${RESET} `;
 const SEL_DARK = "\x1b[48;5;31m\x1b[38;5;231m";
 const SEL_LIGHT = "\x1b[48;5;117m\x1b[38;5;232m";
 
-function visLen(s: string): string["length"] {
-  // eslint-disable-next-line no-control-regex
-  return s.replace(/\x1b\[[0-9;]*m/g, "").length;
-}
-
-/** Cut a colored string to a visible length without splitting escape codes. */
-function truncateVisible(s: string, max: number): string {
-  let out = "";
-  let seen = 0;
-  for (let i = 0; i < s.length; i++) {
-    if (s[i] === "\x1b") {
-      const m = /^\x1b\[[0-9;]*m/.exec(s.slice(i));
-      if (m) {
-        out += m[0];
-        i += m[0].length - 1;
-        continue;
-      }
-    }
-    if (seen >= max) continue;
-    out += s[i];
-    seen++;
-  }
-  return out;
-}
-
 /** One row of the input block: accent bar + content padded to width. No
  * background shading — the block blends with the terminal (dark or light). */
 function boxRow(content: string, w: number): string {
@@ -57,6 +30,12 @@ function boxRow(content: string, w: number): string {
   if (visLen(content) > inner) content = truncateVisible(content, inner);
   const pad = Math.max(0, inner - visLen(content));
   return `${ACCENT}▌${RESET} ${content}${" ".repeat(pad)}`;
+}
+
+interface Frame {
+  lines: string[];
+  curRow: number;
+  curCol: number;
 }
 
 export class Tui implements SessionUI {
@@ -68,12 +47,14 @@ export class Tui implements SessionUI {
   placeholder = "Describe a change…   / commands";
   /** Shown dim on the left of the hint row (the workspace path). */
   hintLeft = "";
+  /** Opening banner lines, seeded into the transcript on start(). */
+  banner: string[] = [];
 
   private ed = new LineEditor();
   private decoder = new KeyDecoder();
+  private onDataFn: ((d: string) => void) | null = null;
+  private onResizeFn: (() => void) | null = null;
   private state: State = "hidden";
-  private prevLines = 0;
-  private offsetFromBottom = 0;
   private history: string[] = [];
   private histIdx = -1;
   private histStash = "";
@@ -81,11 +62,20 @@ export class Tui implements SessionUI {
   private lastMenuFilter: string | null = null;
   private notice: string | null = null;
   private lastCtrlC = 0;
-  /** Latest harness plan (reference, so /clear's plan.reset() is reflected)
-   * and whether its full checklist is expanded in the idle frame. */
-  private lastPlan: Plan | null = null;
-  private planOpen = false;
   private submitResolve: ((s: string) => void) | null = null;
+
+  private transcript = new Transcript();
+  private currentContent: number | null = null;
+  private currentPlan: number | null = null;
+  private pendingTool: number | null = null;
+  private scrollOffset = 0;
+  /** A transient status row (spinner / reasoning ticker / argument progress)
+   * pinned above the input frame, and what currently owns it. */
+  private transient: string | null = null;
+  private transientKind: "spinner" | "ticker" | "progress" | null = null;
+  private ownerRow: number[] = [];
+  private prevScreen: string[] = [];
+
   private sel: {
     title: string;
     options: SelectOption[];
@@ -106,24 +96,29 @@ export class Tui implements SessionUI {
     command: string;
     reason?: string;
     resolve: (r: "yes" | "no" | "always") => void;
-  } | null =
-    null;
+  } | null = null;
   private spinnerTimer: NodeJS.Timeout | null = null;
   private spinnerActive = false;
-  private atLineStart = true;
-  private lastKind: "content" | "thinking" | null = null;
-  private hl: StreamHighlighter;
+  private tickerOn = false;
+  private tickerTimer: NodeJS.Timeout | null = null;
+  private tickerFrame = 0;
+  private thinkBuf = "";
+  private thinkStart = 0;
+  private progressTimer: NodeJS.Timeout | null = null;
+  private progressActive = false;
+  private progressName = "";
+  private progressChars = 0;
+  private progressStart = 0;
+  private progressFrame = 0;
   private mode: ThemeMode;
 
   constructor(mode: ThemeMode = "dark") {
     this.mode = mode;
-    this.hl = new StreamHighlighter(useColor, mode);
   }
 
   setTheme(mode: ThemeMode): void {
     this.mode = mode;
-    this.hl.setMode(mode);
-    if (this.started && this.state !== "hidden") this.redraw();
+    if (this.started) this.render();
   }
 
   private selBar(): string {
@@ -138,19 +133,26 @@ export class Tui implements SessionUI {
     process.stdin.setRawMode?.(true);
     process.stdin.resume();
     process.stdin.setEncoding("utf8");
-    process.stdin.on("data", (d: string) => this.onData(d));
-    process.stdout.on("resize", () => {
-      if (this.state !== "hidden") this.redraw();
-    });
-    process.stdout.write("\x1b[?2004h"); // bracketed paste on
+    this.onDataFn = (d: string) => this.onData(d);
+    this.onResizeFn = () => this.render();
+    process.stdin.on("data", this.onDataFn);
+    process.stdout.on("resize", this.onResizeFn);
+    if (this.banner.length) {
+      this.transcript.add({ kind: "line", text: this.banner.join("\n"), tone: "status" });
+    }
+    // Alternate screen + SGR mouse + bracketed paste.
+    process.stdout.write("\x1b[?1049h\x1b[?1000h\x1b[?1006h\x1b[?2004h\x1b[2J\x1b[H\x1b[?25l");
+    this.prevScreen = [];
+    this.render();
   }
 
   close(): void {
     this.stopSpinner();
     this.endTicker();
     this.stopProgress();
-    this.hideFrame();
-    process.stdout.write("\x1b[?2004l\x1b[?25h");
+    process.stdout.write("\x1b[?1006l\x1b[?1000l\x1b[?2004l\x1b[?1049l\x1b[?25h");
+    if (this.onDataFn) process.stdin.off("data", this.onDataFn);
+    if (this.onResizeFn) process.stdout.off("resize", this.onResizeFn);
     process.stdin.setRawMode?.(false);
     process.stdin.pause();
   }
@@ -162,38 +164,42 @@ export class Tui implements SessionUI {
     this.histIdx = -1;
     this.menuIndex = 0;
     this.state = "idle";
-    this.redraw();
+    this.transient = null;
+    this.scrollOffset = 0;
+    this.render();
     return new Promise((res) => (this.submitResolve = res));
   }
 
   select(title: string, options: SelectOption[]): Promise<number | null> {
     this.stopSpinner();
-    this.hideFrame();
-    process.stdout.write("\x1b[?25l");
+    this.endTicker();
+    this.stopProgress();
     this.state = "select";
     return new Promise((resolve) => {
       this.sel = { title, options, filter: "", index: 0, top: 0, resolve };
-      this.redraw();
+      this.render();
     });
   }
 
   prompt(title: string, placeholder = ""): Promise<string | null> {
     this.stopSpinner();
-    this.hideFrame();
+    this.endTicker();
+    this.stopProgress();
     this.state = "prompt";
     return new Promise((resolve) => {
       this.promptState = { title, placeholder, ed: new LineEditor(), resolve };
-      this.redraw();
+      this.render();
     });
   }
 
   confirmCommand(command: string, reason?: string): Promise<"yes" | "no" | "always"> {
     this.stopSpinner();
-    this.hideFrame();
+    this.endTicker();
+    this.stopProgress();
     this.state = "confirm";
     return new Promise((resolve) => {
       this.confirmState = { command, reason, resolve };
-      this.redraw();
+      this.render();
     });
   }
 
@@ -201,6 +207,20 @@ export class Tui implements SessionUI {
 
   private onData(data: string): void {
     for (const key of this.decoder.decode(data)) {
+      if (key.type === "mouse") {
+        this.onMouse(key.mouse!);
+        continue;
+      }
+      if (key.type === "pgup") {
+        this.scroll(this.pageStep());
+        this.render();
+        continue;
+      }
+      if (key.type === "pgdn") {
+        this.scroll(-this.pageStep());
+        this.render();
+        continue;
+      }
       switch (this.state) {
         case "idle":
           this.keyIdle(key);
@@ -219,6 +239,32 @@ export class Tui implements SessionUI {
           break;
       }
     }
+  }
+
+  /** Mouse: wheel scrolls, a left click toggles the block under the cursor. */
+  private onMouse(m: Mouse): void {
+    if (m.code === 64 || m.code === 65) {
+      this.scroll(m.code === 64 ? 3 : -3);
+      this.render();
+      return;
+    }
+    if (m.release || (m.code & 3) !== 0) return; // left button press only
+    const idx = this.ownerRow[m.y - 1];
+    if (idx === undefined || idx < 0) return;
+    const b = this.transcript.blockAt(idx);
+    if (b && (b.kind === "tool" || b.kind === "plan")) {
+      this.transcript.update(idx, { ...b, expanded: !b.expanded });
+      this.render();
+    }
+  }
+
+  private pageStep(): number {
+    return Math.max(1, this.rows() - 3);
+  }
+
+  /** Positive delta scrolls toward older content. */
+  private scroll(delta: number): void {
+    this.scrollOffset = Math.max(0, this.scrollOffset + delta);
   }
 
   private keyIdle(key: Key): void {
@@ -266,9 +312,6 @@ export class Tui implements SessionUI {
       case "ctrlw":
         this.ed.deleteWordBack();
         break;
-      case "ctrlo":
-        this.planOpen = !this.planOpen;
-        break;
       case "up":
         if (menu.length > 0) {
           this.menuIndex = (this.menuIndex - 1 + menu.length) % menu.length;
@@ -305,7 +348,7 @@ export class Tui implements SessionUI {
         }
         break;
     }
-    this.redraw();
+    this.render();
   }
 
   private submit(menu: SlashCommand[]): void {
@@ -316,17 +359,15 @@ export class Tui implements SessionUI {
     text = text.trim();
     if (!text) return;
     if (this.history[this.history.length - 1] !== text) this.history.push(text);
-    this.hideFrame();
     this.state = "hidden";
-    // Echo the user's message as an accent-barred block, opencode-style.
-    const block = text
-      .split("\n")
-      .map((l) => `${ACCENT}▌${RESET} ${c.bold(l)}`)
-      .join("\n");
-    process.stdout.write(`\n${block}\n\n`);
-    this.atLineStart = true;
-    this.lastKind = null;
-    this.hl.reset();
+    this.currentContent = null;
+    this.currentPlan = null;
+    this.pendingTool = null;
+    this.scrollOffset = 0;
+    this.transient = null;
+    this.transcript.add({ kind: "line", text: "", tone: "status" });
+    this.transcript.add({ kind: "user", text });
+    this.render();
     const resolve = this.submitResolve;
     this.submitResolve = null;
     resolve?.(text);
@@ -387,25 +428,24 @@ export class Tui implements SessionUI {
       default:
         break;
     }
-    this.redraw();
+    this.render();
   }
 
   private endSelect(result: number | null): void {
     const s = this.sel!;
-    this.hideFrame();
-    process.stdout.write("\x1b[?25h");
     this.sel = null;
     this.state = "hidden";
+    this.render();
     s.resolve(result);
   }
 
   private keyPrompt(key: Key): void {
     const p = this.promptState!;
     const finish = (value: string | null) => {
-      this.hideFrame();
       this.promptState = null;
       this.state = "hidden";
-      process.stdout.write(c.dim(`  ${p.title}: ${value ?? "cancelled"}\n`));
+      this.transcript.add({ kind: "line", text: `  ${p.title}: ${value ?? "cancelled"}`, tone: "status" });
+      this.render();
       p.resolve(value);
     };
     switch (key.type) {
@@ -449,7 +489,7 @@ export class Tui implements SessionUI {
       default:
         break;
     }
-    this.redraw();
+    this.render();
   }
 
   private filteredOptions(): SelectOption[] {
@@ -470,12 +510,14 @@ export class Tui implements SessionUI {
     } else if (key.type === "enter") result = "yes";
     else if (key.type === "esc" || key.type === "ctrlc") result = "no";
     if (result === null) return;
-    this.hideFrame();
     this.confirmState = null;
     this.state = "hidden";
-    process.stdout.write(
-      c.dim(`  ${result === "always" ? "always allowed" : result} — ${cs.command}\n`)
-    );
+    this.transcript.add({
+      kind: "line",
+      text: `  ${result === "always" ? "always allowed" : result} — ${cs.command}`,
+      tone: "status",
+    });
+    this.render();
     cs.resolve(result);
   }
 
@@ -498,27 +540,17 @@ export class Tui implements SessionUI {
     return Math.max(30, (process.stdout.columns || 80) - 1);
   }
 
-  private redraw(): void {
+  private rows(): number {
+    return Math.max(3, process.stdout.rows || 24);
+  }
+
+  /** The bottom frame (input block, slash menu, pickers) for the current state. */
+  private frameLines(w: number): Frame {
     const lines: string[] = [];
-    let cursorRow = -1;
-    let cursorCol = 0;
+    let curRow = -1;
+    let curCol = 0;
 
     if (this.state === "idle") {
-      const w = this.width();
-      if (this.lastPlan && this.lastPlan.steps.length) {
-        const p = this.lastPlan;
-        const cur = p.currentIndex >= 0 ? p.steps[p.currentIndex].text : "complete";
-        const toggle = this.planOpen ? "(ctrl+o to collapse)" : "(ctrl+o to expand)";
-        lines.push(truncateVisible(
-          ` ${c.bold(this.planOpen ? "⌄" : "›")} ${c.bold(`Plan ${p.doneCount}/${p.steps.length}`)} ${c.dim("· " + cur)} ${c.dim(toggle)}`,
-          w
-        ));
-        if (this.planOpen) {
-          for (const row of renderPlan(p, "  ").split("\n").slice(1)) {
-            lines.push(truncateVisible(row, w));
-          }
-        }
-      }
       const menu = this.menuEntries();
       const menuW = Math.min(w, 64);
       for (let i = 0; i < menu.length; i++) {
@@ -531,22 +563,20 @@ export class Tui implements SessionUI {
       }
       const inputW = w - 2;
       if (this.ed.buffer.length === 0) {
-        cursorRow = lines.length;
-        cursorCol = 2;
+        curRow = lines.length;
+        curCol = 2;
         lines.push(boxRow(c.dim(this.placeholder.slice(0, inputW)), w));
       } else {
         const lay = layoutBuffer(this.ed.buffer, this.ed.cursor, inputW);
-        cursorRow = lines.length + lay.curRow;
-        cursorCol = 2 + lay.curCol;
+        curRow = lines.length + lay.curRow;
+        curCol = 2 + lay.curCol;
         for (const row of lay.rows) lines.push(boxRow(row, w));
       }
       lines.push(boxRow(this.getStatus(), w));
-      if (this.notice) {
-        lines.push(" " + c.yellow(this.notice));
-      }
+      if (this.notice) lines.push(" " + c.yellow(this.notice));
     } else if (this.state === "select" && this.sel) {
       const s = this.sel;
-      const w = Math.min(this.width(), 64);
+      const sw = Math.min(w, 64);
       lines.push(BAR + c.bold(s.title) + "   " + c.dim("esc cancel"));
       lines.push(BAR + (s.filter ? s.filter : c.dim("type to filter")));
       const filtered = this.filteredOptions();
@@ -558,7 +588,7 @@ export class Tui implements SessionUI {
       for (let i = s.top; i < Math.min(filtered.length, s.top + SELECT_ROWS); i++) {
         const o = filtered[i];
         const marker = o.current ? "● " : "  ";
-        const plain = ` ${marker}${o.label}${o.hint ? "  " + o.hint : ""}`.slice(0, w).padEnd(w);
+        const plain = ` ${marker}${o.label}${o.hint ? "  " + o.hint : ""}`.slice(0, sw).padEnd(sw);
         lines.push(
           i === s.index
             ? `${this.selBar()}${plain}${RESET}`
@@ -569,134 +599,113 @@ export class Tui implements SessionUI {
       if (below > 0) lines.push(c.dim(`   ↓ ${below} more (type to filter)`));
     } else if (this.state === "prompt" && this.promptState) {
       const p = this.promptState;
-      const w = Math.min(this.width(), 64);
+      const pw = Math.min(w, 64);
       lines.push(BAR + c.bold(p.title) + "   " + c.dim("enter confirm · esc cancel"));
-      cursorRow = lines.length;
+      curRow = lines.length;
       if (p.ed.buffer.length === 0) {
-        cursorCol = 2;
-        lines.push(boxRow(c.dim(p.placeholder.slice(0, w - 2)), w));
+        curCol = 2;
+        lines.push(boxRow(c.dim(p.placeholder.slice(0, pw - 2)), pw));
       } else {
-        // One line, scrolled so the cursor stays in view.
-        const from = Math.max(0, p.ed.cursor - (w - 3));
-        cursorCol = 2 + p.ed.cursor - from;
-        lines.push(boxRow(p.ed.buffer.slice(from, from + w - 2), w));
+        const from = Math.max(0, p.ed.cursor - (pw - 3));
+        curCol = 2 + p.ed.cursor - from;
+        lines.push(boxRow(p.ed.buffer.slice(from, from + pw - 2), pw));
       }
     } else if (this.state === "confirm" && this.confirmState) {
-      lines.push(BAR + c.yellow("run? ") + c.bold(this.confirmState.command.slice(0, this.width() - 8)));
+      lines.push(BAR + c.yellow("run? ") + c.bold(this.confirmState.command.slice(0, w - 8)));
       if (this.confirmState.reason) lines.push("  " + c.dim(this.confirmState.reason));
       const program = this.confirmState.command.trim().split(/\s+/)[0];
       lines.push(
         "  " + c.dim(`[y]es · [n]o · [a]lways allow '${program}' this session`)
       );
-    } else {
-      return;
     }
-
-    this.writeFrame(lines, cursorRow, cursorCol);
+    return { lines, curRow, curCol };
   }
 
-  private writeFrame(lines: string[], cursorRow: number, cursorCol: number): void {
-    let seq = "";
-    if (this.prevLines > 0) {
-      if (this.offsetFromBottom > 0) seq += `\x1b[${this.offsetFromBottom}B`;
-      seq += "\r";
-      if (this.prevLines > 1) seq += `\x1b[${this.prevLines - 1}A`;
-      seq += "\x1b[J";
+  /** Compose and paint one full screen: transcript viewport + transient row +
+   * the bottom frame. */
+  private render(): void {
+    if (!this.started) return;
+    const w = this.width();
+    const total = this.rows();
+    const { lines, owner } = this.transcript.flatten(w, this.mode);
+    const frame = this.state === "hidden" ? { lines: [] as string[], curRow: -1, curCol: 0 } : this.frameLines(w);
+    const transientRows = this.transient ? 1 : 0;
+    const bottom = frame.lines.length + transientRows;
+    const viewH = Math.max(0, total - bottom);
+
+    const maxStart = Math.max(0, lines.length - viewH);
+    this.scrollOffset = Math.min(this.scrollOffset, maxStart);
+    const start = maxStart - this.scrollOffset;
+
+    const screen: string[] = [];
+    this.ownerRow = [];
+    for (let i = 0; i < viewH; i++) {
+      const idx = start + i;
+      screen.push(idx < lines.length ? truncateVisible(lines[idx], w) : "");
+      this.ownerRow.push(idx < owner.length ? owner[idx] : -1);
     }
-    seq += lines.join("\n");
-    // park the cursor
-    if (cursorRow >= 0 && cursorRow < lines.length) {
-      const up = lines.length - 1 - cursorRow;
-      if (up > 0) seq += `\x1b[${up}A`;
-      seq += "\r";
-      if (cursorCol > 0) seq += `\x1b[${cursorCol}C`;
-      this.offsetFromBottom = up;
-    } else {
-      this.offsetFromBottom = 0;
+    if (transientRows) {
+      screen.push(truncateVisible(this.transient!, w));
+      this.ownerRow.push(-1);
     }
-    process.stdout.write(seq);
-    this.prevLines = lines.length;
+    for (const l of frame.lines) {
+      screen.push(truncateVisible(l, w));
+      this.ownerRow.push(-1);
+    }
+    while (screen.length < total) {
+      screen.push("");
+      this.ownerRow.push(-1);
+    }
+
+    let cursorRow = -1;
+    let cursorCol = 0;
+    if (frame.curRow >= 0) {
+      cursorRow = viewH + transientRows + frame.curRow;
+      cursorCol = frame.curCol;
+    }
+    this.paint(screen, cursorRow, cursorCol);
   }
 
-  private hideFrame(): void {
-    if (this.prevLines === 0) return;
-    let seq = "";
-    if (this.offsetFromBottom > 0) seq += `\x1b[${this.offsetFromBottom}B`;
-    seq += "\r";
-    if (this.prevLines > 1) seq += `\x1b[${this.prevLines - 1}A`;
-    seq += "\x1b[J";
-    process.stdout.write(seq);
-    this.prevLines = 0;
-    this.offsetFromBottom = 0;
+  private paint(screen: string[], cursorRow: number, cursorCol: number): void {
+    const w = this.width();
+    if (process.stdout.isTTY) {
+      let out = paintDiff(this.prevScreen, screen, w);
+      out += cursorRow >= 0 ? `\x1b[${cursorRow + 1};${cursorCol + 1}H\x1b[?25h` : "\x1b[?25l";
+      process.stdout.write(out);
+    } else {
+      // No cursor addressing off a real terminal (tests, pipes): full frame.
+      process.stdout.write(screen.join("\n") + "\n");
+      if (cursorRow >= 0) process.stdout.write(`\x1b[${cursorRow + 1};${cursorCol + 1}H`);
+    }
   }
 
   /** Redraw the frame if one is on screen (status bar refresh, etc.). */
   refresh(): void {
-    if (this.state !== "hidden") this.redraw();
+    this.render();
   }
 
   // ---- AgentUI (output while the agent runs) -------------------------------
 
-  private out(s: string): void {
-    if (this.tickerOn) this.endTicker();
-    this.stopProgress();
-    if (this.state !== "hidden") {
-      this.hideFrame();
-      process.stdout.write(s);
-      this.redraw();
-    } else {
-      process.stdout.write(s);
-    }
-  }
-
-  private thinkBuf = "";
-  private thinkStart = 0;
-  private tickerOn = false;
-  private tickerTimer: NodeJS.Timeout | null = null;
-  private tickerFrame = 0;
-
-  /** Tool-call argument streaming: a live line so a long file write does not
-   * look like a frozen screen while the model is still decoding. */
-  private progressTimer: NodeJS.Timeout | null = null;
-  private progressActive = false;
-  private progressName = "";
-  private progressChars = 0;
-  private progressStart = 0;
-  private progressFrame = 0;
-
-  private ensureLine(): void {
-    if (this.tickerOn) {
-      this.endTicker();
-      return;
-    }
-    if (this.progressActive) {
-      this.stopProgress();
-      return;
-    }
-    if (!this.atLineStart) {
-      this.out(this.hl.flush() + "\n");
-      this.atLineStart = true;
-    }
-  }
-
   token(text: string): void {
     this.stopSpinner();
-    this.lastKind = "content";
-    this.out(this.hl.push(text));
-    this.atLineStart = text.endsWith("\n");
+    this.endTicker();
+    this.stopProgress();
+    if (this.currentContent === null) {
+      this.currentContent = this.transcript.add({ kind: "content", raw: "" });
+    }
+    const b = this.transcript.blockAt(this.currentContent) as { kind: "content"; raw: string };
+    this.transcript.update(this.currentContent, { kind: "content", raw: b.raw + text });
+    this.render();
   }
 
-  /** Reasoning streams as ONE grey line, cropped to the latest tail and
-   * overwritten in place — a live, ticking pulse. It collapses to
-   * "✦ thought for Ns" the moment real output starts. The line keeps
-   * animating on its own even when reasoning pauses, so a model that has gone
-   * quiet to decode a tool call never looks hung. */
+  /** Reasoning streams as ONE grey transient row, cropped to the latest tail —
+   * a live, ticking pulse cleared the moment real output starts. */
   thinking(text: string): void {
     this.stopSpinner();
     if (this.state !== "hidden") return;
     if (!this.tickerOn) {
-      if (!this.atLineStart) this.out("\n");
       this.tickerOn = true;
+      this.transientKind = "ticker";
       this.thinkStart = Date.now();
       this.thinkBuf = "";
       this.tickerTimer = setInterval(() => {
@@ -717,8 +726,8 @@ export class Tui implements SessionUI {
     const avail = Math.max(8, w - 2 - suffix.length);
     const tail = clean.length > avail ? "…" + clean.slice(-(avail - 1)) : clean;
     const glyph = c.gray(frames[this.tickerFrame++ % frames.length]);
-    process.stdout.write("\r\x1b[2K" + glyph + " " + c.gray("✦ " + tail + suffix));
-    this.atLineStart = false;
+    this.transient = glyph + " " + c.gray("✦ " + tail + suffix);
+    this.render();
   }
 
   private endTicker(): void {
@@ -726,15 +735,18 @@ export class Tui implements SessionUI {
       clearInterval(this.tickerTimer);
       this.tickerTimer = null;
     }
-    if (!this.tickerOn) return;
-    this.tickerOn = false;
-    process.stdout.write("\r\x1b[2K");
-    this.thinkBuf = "";
-    this.atLineStart = true;
+    if (this.tickerOn) {
+      this.tickerOn = false;
+      this.thinkBuf = "";
+      if (this.transientKind === "ticker") {
+        this.transient = null;
+        this.transientKind = null;
+      }
+    }
   }
 
-  /** Called as a tool call's arguments stream in: replaces any reasoning line
-   * with a live "writing X · Nk · Ns" indicator until the call completes. */
+  /** Called as a tool call's arguments stream in: a live "writing X · Nk · Ns"
+   * transient row until the call completes. */
   toolCallProgress(name: string, chars: number): void {
     this.stopSpinner();
     if (this.state !== "hidden") return;
@@ -742,11 +754,8 @@ export class Tui implements SessionUI {
     this.progressName = name;
     this.progressChars = chars;
     if (!this.progressActive) {
-      if (!this.atLineStart) {
-        process.stdout.write("\n");
-        this.atLineStart = true;
-      }
       this.progressActive = true;
+      this.transientKind = "progress";
       this.progressStart = Date.now();
       this.progressTimer = setInterval(() => this.renderProgress(), 100);
     }
@@ -758,8 +767,8 @@ export class Tui implements SessionUI {
     const secs = Math.floor((Date.now() - this.progressStart) / 1000);
     const size = this.progressChars >= 1000 ? `${(this.progressChars / 1000).toFixed(1)}k` : String(this.progressChars);
     const label = `${this.progressName} · ${size} chars · ${secs}s · esc to cancel`;
-    process.stdout.write(`\r${c.cyan(frames[this.progressFrame++ % frames.length])} ${c.dim(label)}   `);
-    this.atLineStart = false;
+    this.transient = c.cyan(frames[this.progressFrame++ % frames.length]) + " " + c.dim(label);
+    this.render();
   }
 
   private stopProgress(): void {
@@ -768,93 +777,142 @@ export class Tui implements SessionUI {
       this.progressTimer = null;
     }
     if (this.progressActive) {
-      process.stdout.write("\r\x1b[2K");
       this.progressActive = false;
-      this.atLineStart = true;
+      if (this.transientKind === "progress") {
+        this.transient = null;
+        this.transientKind = null;
+      }
     }
   }
 
   toolCall(name: string, args: Record<string, any>): void {
     this.stopSpinner();
-    this.ensureLine();
-    this.lastKind = null;
-    this.out(`${c.cyan("→")} ${c.bold(name)} ${c.dim(summarizeArgs(name, args))}\n`);
+    this.endTicker();
+    this.stopProgress();
+    this.currentContent = null;
+    this.pendingTool = this.transcript.add({
+      kind: "tool",
+      name,
+      argsSummary: summarizeArgs(name, args),
+      expanded: false,
+    });
+    this.render();
   }
 
   toolResult(result: string, durationMs?: number): void {
-    this.ensureLine();
-    this.lastKind = null;
-    const firstLine = result.split("\n")[0] ?? "";
-    const isError = firstLine.startsWith("Error");
-    const lineCount = result.split("\n").length;
-    const took = durationMs !== undefined ? c.dim(" · " + fmtDuration(durationMs)) : "";
-    if (isError) {
-      this.out(`  ${c.red("✗")} ${c.red(firstLine.slice(0, 120))}${took}\n`);
-    } else if (result.includes("Warning:")) {
-      this.out(`  ${c.yellow("! " + result.slice(result.indexOf("Warning:")).split("\n")[0])}${took}\n`);
+    this.stopSpinner();
+    this.endTicker();
+    this.stopProgress();
+    const lines = result.split("\n");
+    const first = lines[0] ?? "";
+    const err = first.startsWith("Error");
+    const warn = !err && result.includes("Warning:");
+    let summary: string;
+    if (err) summary = first.slice(0, 120);
+    else if (warn) summary = result.slice(result.indexOf("Warning:")).split("\n")[0];
+    else summary = first.slice(0, 100) + (lines.length > 1 ? ` (+${lines.length - 1} lines)` : "");
+    const took = durationMs !== undefined ? fmtDuration(durationMs) : "";
+
+    if (this.pendingTool !== null) {
+      const b = this.transcript.blockAt(this.pendingTool);
+      if (b && b.kind === "tool") {
+        this.transcript.update(this.pendingTool, { ...b, result: { summary, took, err, warn } });
+      }
+      this.pendingTool = null;
     } else {
-      const label = c.dim(firstLine.slice(0, 100) + (lineCount > 1 ? ` (+${lineCount - 1} lines)` : ""));
-      this.out(`  ${c.green("✓")} ${label}${took}\n`);
+      this.transcript.add({ kind: "line", text: summary, tone: err ? "error" : "status" });
     }
-    this.atLineStart = true;
+    this.render();
   }
 
   resetResponse(): void {
-    this.ensureLine();
-    this.hl.reset();
-    this.out(c.dim("[Interrupted response discarded]\n"));
+    this.stopSpinner();
+    this.endTicker();
+    this.stopProgress();
+    while (this.transcript.lastIndex >= 0 && this.transcript.blockAt(this.transcript.lastIndex)?.kind === "content") {
+      this.transcript.pop();
+    }
+    this.currentContent = null;
+    this.transcript.add({ kind: "line", text: "[Interrupted response discarded]", tone: "status" });
+    this.render();
   }
 
   println(s = ""): void {
     this.stopSpinner();
-    this.ensureLine();
-    this.lastKind = null;
-    this.out(s + "\n");
-    this.atLineStart = true;
+    this.endTicker();
+    this.stopProgress();
+    this.transcript.add({ kind: "line", text: s, tone: "status" });
+    this.render();
   }
 
   status(s: string): void {
-    this.println(c.gray(s));
+    this.println(s);
   }
 
   turnEnd(label: string): void {
-    this.ensureLine();
-    this.lastKind = null;
-    this.out(`${c.dim("■ " + label)}\n\n`);
-    this.atLineStart = true;
+    this.stopSpinner();
+    this.endTicker();
+    this.stopProgress();
+    this.currentContent = null;
+    this.pendingTool = null;
+    this.transcript.add({ kind: "line", text: "", tone: "status" });
+    this.transcript.add({ kind: "turnend", label });
+    this.render();
   }
 
   planUpdated(plan: Plan): void {
     this.stopSpinner();
-    this.ensureLine();
-    this.lastKind = null;
-    this.lastPlan = plan; // reference: reflects plan.reset() on /clear
-    const current = plan.currentIndex >= 0 ? plan.steps[plan.currentIndex].text : "complete";
-    this.out(c.dim(`  Plan ${plan.doneCount}/${plan.steps.length} · ${current}  (ctrl+o to expand)`) + "\n");
-    this.atLineStart = true;
+    this.endTicker();
+    this.stopProgress();
+    this.currentContent = null;
+    const block: Block = {
+      kind: "plan",
+      steps: plan.steps.map((s) => ({ text: s.text, done: s.done, durationMs: s.durationMs })),
+      current: plan.currentIndex,
+      done: plan.doneCount,
+      total: plan.steps.length,
+      expanded: false,
+    };
+    if (this.currentPlan !== null && this.transcript.blockAt(this.currentPlan)?.kind === "plan") {
+      const prev = this.transcript.blockAt(this.currentPlan) as { kind: "plan"; expanded: boolean };
+      this.transcript.update(this.currentPlan, { ...block, expanded: prev.expanded });
+    } else {
+      this.currentPlan = this.transcript.add(block);
+    }
+    this.render();
   }
 
   warn(s: string): void {
-    this.println(c.yellow(s));
+    this.stopSpinner();
+    this.endTicker();
+    this.stopProgress();
+    this.transcript.add({ kind: "line", text: s, tone: "warn" });
+    this.render();
   }
 
   error(s: string): void {
-    this.println(c.red(s));
+    this.stopSpinner();
+    this.endTicker();
+    this.stopProgress();
+    this.transcript.add({ kind: "line", text: s, tone: "error" });
+    this.render();
   }
 
   startSpinner(label: string): void {
-    if (!process.stdout.isTTY || this.state !== "hidden") return;
+    if (this.state !== "hidden") return;
     this.stopSpinner();
     const frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
     let i = 0;
     const started = Date.now();
     this.spinnerActive = true;
+    this.transientKind = "spinner";
     this.spinnerTimer = setInterval(() => {
       const secs = Math.floor((Date.now() - started) / 1000);
-      process.stdout.write(
-        `\r${c.cyan(frames[i++ % frames.length])} ${c.dim(label + (secs > 2 ? ` ${secs}s` : "") + " · esc to cancel")}   `
-      );
+      this.transient = c.cyan(frames[i++ % frames.length]) + " " + c.dim(label + (secs > 2 ? ` ${secs}s` : "") + " · esc to cancel");
+      this.render();
     }, 100);
+    this.transient = c.cyan(frames[0]) + " " + c.dim(label + " · esc to cancel");
+    this.render();
   }
 
   stopSpinner(): void {
@@ -862,9 +920,10 @@ export class Tui implements SessionUI {
       clearInterval(this.spinnerTimer);
       this.spinnerTimer = null;
     }
-    if (this.spinnerActive) {
-      process.stdout.write("\r" + " ".repeat(70) + "\r");
-      this.spinnerActive = false;
+    this.spinnerActive = false;
+    if (this.transientKind === "spinner") {
+      this.transient = null;
+      this.transientKind = null;
     }
   }
 }
