@@ -9,6 +9,10 @@ export interface PlanStep {
   done: boolean;
   /** Model-authored working notes, kept verbatim instead of re-summarized. */
   note?: string;
+  /** When the step became current (ms epoch). */
+  startedAt?: number;
+  /** How long the step stayed current before it was marked done. */
+  durationMs?: number;
 }
 
 export class Plan {
@@ -25,6 +29,13 @@ export class Plan {
   /** Index of the current (first undone) step, or -1 when all done/empty. */
   get currentIndex(): number {
     return this.steps.findIndex((s) => !s.done);
+  }
+
+  /** Stamp when the current step became current, so its dwell time can be
+   * reported once it is marked done. */
+  private startCurrent(): void {
+    const i = this.currentIndex;
+    if (i >= 0 && this.steps[i].startedAt === undefined) this.steps[i].startedAt = Date.now();
   }
 
   reset(): void {
@@ -44,6 +55,7 @@ export class Plan {
       return 'Error: steps is required — one step per line. Example: {"action": "set", "steps": "create index.html\\ncreate game.js\\ntest the page"}';
     }
     this.steps = lines.map((text) => ({ text, done: false }));
+    this.startCurrent();
     return `Plan set (${this.steps.length} steps). Current: 1. ${this.steps[0].text}`;
   }
 
@@ -62,6 +74,9 @@ export class Plan {
       }
     }
     this.steps[idx].done = true;
+    const step = this.steps[idx];
+    if (step.startedAt !== undefined) step.durationMs = Date.now() - step.startedAt;
+    this.startCurrent();
     const next = this.currentIndex;
     return next < 0
       ? `Done: ${idx + 1}. All ${this.steps.length} steps complete.`
@@ -74,6 +89,7 @@ export class Plan {
     }
     if (this.steps.length >= 20) return "Error: the plan already has 20 steps — finish some first.";
     this.steps.push({ text: text.trim(), done: false });
+    this.startCurrent();
     return `Added step ${this.steps.length}: ${text.trim()}`;
   }
 

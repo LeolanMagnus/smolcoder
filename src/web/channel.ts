@@ -245,7 +245,7 @@ export class SessionChannel implements SessionUI {
     this.broadcast({ t: "tool", name, summary: summarizeArgs(name, args) });
   }
 
-  toolResult(result: string): void {
+  toolResult(result: string, durationMs?: number): void {
     const lines = result.split("\n");
     const first = lines[0] ?? "";
     this.broadcast({
@@ -254,6 +254,7 @@ export class SessionChannel implements SessionUI {
       err: first.startsWith("Error"),
       extra: lines.length > 1 ? lines.length - 1 : 0,
       body: result,
+      ms: durationMs,
     });
   }
 

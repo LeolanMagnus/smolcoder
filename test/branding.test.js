@@ -17,19 +17,19 @@ test('logo rows spell SMOL in equal-width block letters', () => {
 test('terminal session banner shows the block logo on a normal-width terminal', () => {
   const lines = terminalLogo(80, '9.9.9').map(strip);
   for (const r of LOGO_ROWS) assert.ok(lines.some((l) => l.includes(r.trimEnd())), 'missing row: ' + r);
-  assert.ok(lines.some((l) => l.includes('coder v9.9.9')), 'version tail missing');
+  assert.ok(lines.some((l) => l.includes('coder ENCHANTED v9.9.9')), 'version tail missing');
 });
 
 test('terminal banner keeps the art and drops the tail to its own line when only the art fits', () => {
   const lines = terminalLogo(45, '9.9.9').map(strip);
   for (const r of LOGO_ROWS) assert.ok(lines.some((l) => l.includes(r.trimEnd())), 'missing row: ' + r);
-  assert.ok(lines.some((l) => l.trim() === 'coder v9.9.9'), 'tail should be on its own line');
+  assert.ok(lines.some((l) => l.trim() === 'coder ENCHANTED v9.9.9'), 'tail should be on its own line');
 });
 
 test('terminal banner falls back to the plain name on a narrow terminal', () => {
   const lines = terminalLogo(30, '9.9.9').map(strip);
   assert.equal(lines.length, 1);
-  assert.match(lines[0], /smolcoder v9\.9\.9/);
+  assert.match(lines[0], /smolcoder ENCHANTED v9\.9\.9/);
   for (const r of LOGO_ROWS) assert.ok(!lines[0].includes(r.trimEnd()));
 });
 

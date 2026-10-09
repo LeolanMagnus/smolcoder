@@ -423,6 +423,7 @@ export class Agent {
 
           let output: string;
           let observedOutput: string | undefined;
+          const callStarted = Date.now();
           if (call.parseError) {
             // LM Studio streams the partial arguments of a cut-off call, so
             // the overflow surfaces here as unparseable JSON.
@@ -469,6 +470,7 @@ export class Agent {
             }
           }
 
+          const callDuration = Date.now() - callStarted;
           const key = JSON.stringify([call.name, call.args, observedOutput ?? output]);
           repeats = key === repeatKey ? repeats + 1 : 1;
           repeatKey = key;
@@ -503,7 +505,7 @@ export class Agent {
           ) {
             this.ui.planUpdated(this.toolCtx.plan);
           } else {
-            this.ui.toolResult(output);
+            this.ui.toolResult(output, callDuration);
           }
           this.messages.push({
             role: "tool",

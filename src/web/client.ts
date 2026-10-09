@@ -207,6 +207,7 @@ const logResize = new ResizeObserver(stick);
 logResize.observe(logwrap); logResize.observe(logsEl); logResize.observe($("busywrap"));
 function add(v, e) { v.logEl.appendChild(e); if (v === active) stick(); return e; }
 function fmtSize(n) { return n < 1024 ? n + " B" : n < 1048576 ? (n / 1024).toFixed(n < 10240 ? 1 : 0) + " KB" : (n / 1048576).toFixed(1) + " MB"; }
+function fmtMs(ms) { return ms < 1000 ? Math.round(ms) + "ms" : ms < 60000 ? (ms / 1000).toFixed(1) + "s" : Math.floor(ms / 60000) + "m" + Math.round((ms % 60000) / 1000) + "s"; }
 // A sent message: its text, then thumbnails for images and links for files.
 function userBubble(m) {
   const d = el("div", "user", m.s || "");
@@ -332,7 +333,9 @@ function renderPlan(v, p) {
   p.steps.forEach((s, i) => {
     const cls = s.done ? "done" : i === p.current ? "cur" : "todo";
     const mark = s.done ? "✔ " : i === p.current ? "▶ " : "○ ";
-    box.appendChild(el("div", cls, mark + s.text));
+    const row = el("div", cls, mark + s.text);
+    if (s.done && s.durationMs !== undefined) row.appendChild(el("small", "took", " · " + fmtMs(s.durationMs)));
+    box.appendChild(row);
   });
   if (v.planEl && v.planEl.isConnected) v.planEl.replaceWith(box); else add(v, box);
   v.planEl = box;
@@ -375,7 +378,11 @@ function handle(m) {
     case "result": {
       endThought(v); v.curText = null;
       const body = el("pre", "result" + (m.err ? " err" : ""), m.body || m.line);
-      if (v.curTool) { v.curTool.classList.add(m.err ? "failed" : "finished"); v.curTool.appendChild(body); if (m.err) v.curTool.open = true; v.curTool = null; }
+      if (v.curTool) {
+        const sum = v.curTool.querySelector("summary");
+        if (sum && m.ms !== undefined) sum.appendChild(el("span", "took", "· " + fmtMs(m.ms)));
+        v.curTool.classList.add(m.err ? "failed" : "finished"); v.curTool.appendChild(body); if (m.err) v.curTool.open = true; v.curTool = null;
+      }
       else add(v, body);
       break;
     }

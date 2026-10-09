@@ -5,7 +5,7 @@
 import * as readline from "readline";
 import { UserInput } from "./attachments";
 import { Plan } from "./plan";
-import { c } from "./util";
+import { c, fmtDuration } from "./util";
 
 /** What the agent loop needs from a UI — implemented by the plain UI (used in
  * -p / non-TTY mode) and by the interactive Tui. */
@@ -18,7 +18,8 @@ export interface AgentUI {
   token(text: string): void;
   thinking(text: string): void;
   toolCall(name: string, args: Record<string, any>): void;
-  toolResult(result: string): void;
+  /** `durationMs` is how long the tool took, shown on the result line. */
+  toolResult(result: string, durationMs?: number): void;
   println(s?: string): void;
   status(s: string): void;
   warn(s: string): void;
@@ -68,7 +69,10 @@ export function renderPlan(plan: Plan, indent = "  "): string {
   const cur = plan.currentIndex;
   const header = `${indent}${c.bold("Plan")} ${c.dim(`${plan.doneCount}/${plan.steps.length}`)}`;
   const rows = plan.steps.map((s, i) => {
-    if (s.done) return `${indent}${c.dim("✔ " + s.text)}`;
+    if (s.done) {
+      const took = s.durationMs !== undefined ? ` ${c.dim("· " + fmtDuration(s.durationMs))}` : "";
+      return `${indent}${c.dim("✔ " + s.text)}${took}`;
+    }
     if (i === cur) return `${indent}${c.cyan("▶ " + s.text)}`;
     return `${indent}${c.gray("○ " + s.text)}`;
   });
@@ -183,14 +187,15 @@ export class UI implements AgentUI {
     this.meta(`${c.cyan("→")} ${c.bold(name)} ${c.dim(summary)}`);
   }
 
-  toolResult(result: string): void {
+  toolResult(result: string, durationMs?: number): void {
     const firstLine = result.split("\n")[0] ?? "";
     const isError = firstLine.startsWith("Error");
     const lines = result.split("\n").length;
+    const took = durationMs !== undefined ? c.dim(` ${fmtDuration(durationMs)}`) : "";
     const label = isError
       ? c.red(firstLine.slice(0, 120))
       : c.dim(firstLine.slice(0, 100) + (lines > 1 ? ` (+${lines - 1} lines)` : ""));
-    this.meta(`  ${isError ? c.red("✗") : c.green("✓")} ${label}`);
+    this.meta(`  ${isError ? c.red("✗") : c.green("✓")} ${label}${took}`);
   }
 
   println(s = ""): void {

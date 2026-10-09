@@ -1,6 +1,11 @@
 // Compact workspace chrome, with monospace reserved for code and commands.
+// The model's reply is themed from MARKDOWN (see src/theme.ts): the palette is
+// opencode's default dark theme shifted toward blue, shared with the terminal.
 
 import { LOGO_ROWS } from "../logo";
+import { LIGHT_PALETTE, MARKDOWN, markdownOf } from "../theme";
+
+const LIGHT_MD = markdownOf("light");
 
 // The logo as a CSS string: "\A " is a newline whose trailing space is eaten
 // by the escape, so each row starts where it should.
@@ -11,6 +16,14 @@ export const STYLES = String.raw`
     --bg: #111416; --fg: #e1e5e7; --dim: #a0a8ae; --gray: #79838b;
     --accent: #35bfd4; --yellow: #e0af68; --red: #f7768e; --green: #9ece6a;
     --magenta: #bb9af7; --box: #14181a; --sel: #1a7f94; --line: #232a2f; --side: #0e1113;
+    /* The model's reply, one blue-shifted theme for both surfaces. */
+    --md-text: ${MARKDOWN.text}; --md-heading: ${MARKDOWN.heading};
+    --md-link: ${MARKDOWN.link}; --md-link-text: ${MARKDOWN.linkText};
+    --md-code: ${MARKDOWN.code}; --md-code-block: ${MARKDOWN.codeBlock};
+    --md-strong: ${MARKDOWN.strong}; --md-emph: ${MARKDOWN.emph};
+    --md-quote: ${MARKDOWN.quote}; --md-hr: ${MARKDOWN.hr};
+    --md-list: ${MARKDOWN.listItem}; --md-list-enum: ${MARKDOWN.listEnum};
+    --md-code-bg: #141c26; --md-codeblock-bg: #0e141c;
   }
   * { box-sizing: border-box; }
   /* Class rules below set display; the hidden attribute must still win. */
@@ -107,22 +120,27 @@ export const STYLES = String.raw`
   .thought-collapse, .thought[open] .thought-expand { display: none; }
   .thought[open] .thought-collapse { display: inline; }
   .thought-body { color: var(--dim); white-space: pre-wrap; overflow-wrap: anywhere; border-left: 2px solid var(--line); padding: 8px 12px; margin: 4px 0 12px 4px; line-height: 1.7; }
-  .md { white-space: normal; }
+  .md { white-space: normal; color: var(--md-text); }
   .md p { margin: 6px 0; }
-  .md h1, .md h2, .md h3, .md h4, .md h5, .md h6 { margin: 14px 0 6px; line-height: 1.3; color: #eef3f5; }
+  .md h1, .md h2, .md h3, .md h4, .md h5, .md h6 { margin: 14px 0 6px; line-height: 1.3; color: var(--md-heading); }
   .md h1 { font-size: 1.3em; } .md h2 { font-size: 1.17em; } .md h3 { font-size: 1.06em; }
   .md h4, .md h5, .md h6 { font-size: 1em; }
   .md ul, .md ol { margin: 6px 0; padding-left: 22px; }
   .md li { margin: 2px 0; }
-  .md strong { color: #eef3f5; }
-  .md code { background: #1b2124; padding: 1px 5px; border-radius: 3px; color: var(--yellow); }
-  .md pre { background: #11161a; border: 1px solid var(--line); border-radius: 4px; padding: 10px 12px; overflow-x: auto; margin: 8px 0; }
-  .md pre code { background: none; padding: 0; color: var(--fg); }
+  .md li::marker { color: var(--md-list); }
+  .md ol li::marker { color: var(--md-list-enum); }
+  .md a { color: var(--md-link); }
+  .md em { color: var(--md-emph); }
+  .md strong { color: var(--md-strong); }
+  .md del { color: var(--md-hr); }
+  .md code { background: var(--md-code-bg); padding: 1px 5px; border-radius: 3px; color: var(--md-code); }
+  .md pre { background: var(--md-codeblock-bg); border: 1px solid var(--line); border-radius: 4px; padding: 10px 12px; overflow-x: auto; margin: 8px 0; }
+  .md pre code { background: none; padding: 0; color: var(--md-code-block); }
   .md table { border-collapse: collapse; margin: 8px 0; display: block; overflow-x: auto; max-width: 100%; }
   .md th, .md td { border: 1px solid var(--line); padding: 4px 10px; text-align: left; }
-  .md th { background: #171d20; color: #eef3f5; }
-  .md blockquote { border-left: 3px solid #2c343a; margin: 8px 0; padding-left: 12px; color: var(--dim); }
-  .md hr { border: 0; border-top: 1px solid var(--line); margin: 12px 0; }
+  .md th { background: #171d20; color: var(--md-heading); }
+  .md blockquote { border-left: 3px solid var(--md-hr); margin: 8px 0; padding-left: 12px; color: var(--md-quote); }
+  .md hr { border: 0; border-top: 1px solid var(--md-hr); margin: 12px 0; }
   .tool { color: var(--dim); margin-top: 4px; }
   .tool .name { color: var(--accent); font-weight: 600; }
   .result { color: var(--dim); padding-left: 16px; }
@@ -132,6 +150,8 @@ export const STYLES = String.raw`
   .plan .done { color: var(--gray); text-decoration: line-through; }
   .plan .cur { color: var(--accent); font-weight: 600; }
   .plan .todo { color: var(--dim); }
+  .took { color: var(--gray); font-weight: 400; font-size: 12px; margin-left: 6px; }
+  .plan .done .took { text-decoration: none; }
   .turnend { color: var(--gray); margin: 8px 0 4px; }
   .line-status { color: var(--gray); white-space: pre-wrap; } .line-warn { color: var(--yellow); white-space: pre-wrap; } .line-error { color: var(--red); white-space: pre-wrap; }
   #busy { color: var(--dim); display: none; }
@@ -329,5 +349,49 @@ export const STYLES = String.raw`
     #panel { position: absolute; inset: 48px 0 0; width: 100% !important; max-width: 100%; z-index: 15; }
     .modelpick { max-width: 150px; }
     .wshdr .iconbtn, .sess .iconbtn { visibility: visible; }
+  }
+
+  /* ---- light theme: follows the OS when it prefers light ---- */
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #ffffff; --fg: #1f2328; --dim: #4d5761; --gray: #6e7781;
+      --accent: #0969da; --yellow: #9a6700; --red: #cf222e; --green: #1a7f37;
+      --magenta: #8250df; --box: #f6f8fa; --sel: #cfe3ff; --line: #d8dee4; --side: #f6f8fa;
+      --md-text: ${LIGHT_MD.text}; --md-heading: ${LIGHT_MD.heading};
+      --md-link: ${LIGHT_MD.link}; --md-link-text: ${LIGHT_MD.linkText};
+      --md-code: ${LIGHT_MD.code}; --md-code-block: ${LIGHT_MD.codeBlock};
+      --md-strong: ${LIGHT_MD.strong}; --md-emph: ${LIGHT_MD.emph};
+      --md-quote: ${LIGHT_MD.quote}; --md-hr: ${LIGHT_MD.hr};
+      --md-list: ${LIGHT_MD.listItem}; --md-list-enum: ${LIGHT_MD.listEnum};
+      --md-code-bg: ${LIGHT_PALETTE.codeBg}; --md-codeblock-bg: #f6f8fa;
+    }
+    html { color-scheme: light; scrollbar-color: #c9d1d9 transparent; }
+    ::-webkit-scrollbar-thumb { background: #c9d1d9; }
+    ::-webkit-scrollbar-thumb:hover { background: #adb5bd; }
+    .iconbtn:hover { background: #eaeef2; }
+    .iconbtn.on { background: #ddf4ff; }
+    .primary { background: #0969da; color: #ffffff; border-color: #0969da; }
+    .ghost { background: #f6f8fa; }
+    .wshdr:hover, .sess:hover, .wsbtn:hover, .ptab:hover { background: #eaeef2; }
+    .sess.active, .ptab.on { background: #ddf4ff; color: #0a3069; }
+    .md th { background: #f6f8fa; }
+    .result { background: #f6f8fa; }
+    .ask button, .ask .opt { background: #eaeef2; border-color: #d0d7de; }
+    .ask .askinput { background: #ffffff; border-color: #d0d7de; }
+    #panel { background: #f6f8fa; }
+    .chip, .fsitem:hover { background: #eaeef2; }
+    #inputbox { background: #f6f8fa; border-color: #d0d7de; }
+    #inputbox:focus-within { border-color: #0969da; }
+    .user, .attach { background: #f6f8fa; }
+    .user .filechip { background: #ffffff; }
+    .tabbody.term { background: #ffffff; color: #1f2328; }
+    #actionbtn { background: #eaeef2; border-color: #d0d7de; }
+    .statusbtn:hover { background: #eaeef2; }
+    #menu .item.sel { background: var(--sel); color: #0a3069; }
+    .dlg { background: #ffffff; }
+    #modal { background: rgba(31, 35, 40, 0.35); }
+    /* ANSI near-white rows are unreadable on a light page. */
+    .a37 { color: #0a3069; }
+    .a97 { color: #1f2328; }
   }
 `;

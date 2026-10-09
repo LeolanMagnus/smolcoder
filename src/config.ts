@@ -30,6 +30,8 @@ export interface Config {
   lastMode?: Mode;
   effort?: Effort | null;
   hosts?: SavedHost[];
+  /** Reply theme: "auto" detects the terminal (default), or force dark/light. */
+  theme?: "auto" | "dark" | "light";
 }
 
 export function loadConfig(): Config {

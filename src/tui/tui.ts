@@ -7,9 +7,11 @@
 // the agent runs, output streams plainly and scrolls naturally.
 
 import { Plan } from "../plan";
+import { ThemeMode } from "../theme";
 import { SelectOption, SessionUI, SlashCommand, summarizeArgs } from "../ui";
-import { c } from "../util";
+import { c, fmtDuration, useColor } from "../util";
 import { LineEditor, layoutBuffer } from "./editor";
+import { StreamHighlighter } from "./highlight";
 import { Key, KeyDecoder } from "./keys";
 
 type State = "hidden" | "idle" | "select" | "confirm" | "prompt";
@@ -18,9 +20,10 @@ const SELECT_ROWS = 10;
 
 const ACCENT = "\x1b[36m"; // cyan accent bar
 const RESET = "\x1b[0m";
-const SEL = "\x1b[48;5;31m\x1b[38;5;231m"; // cyan selection bar, white text — one blue theme
 const BAR = `${ACCENT}▌${RESET} `;
-const BOX_BG = "\x1b[48;5;235m"; // subtle shading for the input block
+// Selection bar for menu/picker rows, per theme (no dark shading elsewhere).
+const SEL_DARK = "\x1b[48;5;31m\x1b[38;5;231m";
+const SEL_LIGHT = "\x1b[48;5;117m\x1b[38;5;232m";
 
 function visLen(s: string): string["length"] {
   // eslint-disable-next-line no-control-regex
@@ -47,14 +50,13 @@ function truncateVisible(s: string, max: number): string {
   return out;
 }
 
-/** One shaded row of the input block: accent bar + content padded to width,
- * with the block background re-applied after any color reset inside. */
+/** One row of the input block: accent bar + content padded to width. No
+ * background shading — the block blends with the terminal (dark or light). */
 function boxRow(content: string, w: number): string {
   const inner = Math.max(1, w - 2);
   if (visLen(content) > inner) content = truncateVisible(content, inner);
   const pad = Math.max(0, inner - visLen(content));
-  const body = (content + " ".repeat(pad)).split(RESET).join(RESET + BOX_BG);
-  return `${BOX_BG}${ACCENT}▌\x1b[39m ${body}${RESET}`;
+  return `${ACCENT}▌${RESET} ${content}${" ".repeat(pad)}`;
 }
 
 export class Tui implements SessionUI {
@@ -106,6 +108,23 @@ export class Tui implements SessionUI {
   private spinnerActive = false;
   private atLineStart = true;
   private lastKind: "content" | "thinking" | null = null;
+  private hl: StreamHighlighter;
+  private mode: ThemeMode;
+
+  constructor(mode: ThemeMode = "dark") {
+    this.mode = mode;
+    this.hl = new StreamHighlighter(useColor, mode);
+  }
+
+  setTheme(mode: ThemeMode): void {
+    this.mode = mode;
+    this.hl.setMode(mode);
+    if (this.started && this.state !== "hidden") this.redraw();
+  }
+
+  private selBar(): string {
+    return this.mode === "light" ? SEL_LIGHT : SEL_DARK;
+  }
 
   /** Safe to call twice: startup opens the TUI early when it has to ask where
    * the models are, and the session starts it again later. */
@@ -300,6 +319,7 @@ export class Tui implements SessionUI {
     process.stdout.write(`\n${block}\n\n`);
     this.atLineStart = true;
     this.lastKind = null;
+    this.hl.reset();
     const resolve = this.submitResolve;
     this.submitResolve = null;
     resolve?.(text);
@@ -484,7 +504,7 @@ export class Tui implements SessionUI {
         const row = ` /${menu[i].name.padEnd(12)} ${menu[i].desc}`.slice(0, menuW).padEnd(menuW);
         lines.push(
           i === this.menuIndex
-            ? `${SEL}${row}${RESET}`
+            ? `${this.selBar()}${row}${RESET}`
             : ` ${c.bold("/" + menu[i].name.padEnd(12))} ${c.dim(menu[i].desc)}`
         );
       }
@@ -520,7 +540,7 @@ export class Tui implements SessionUI {
         const plain = ` ${marker}${o.label}${o.hint ? "  " + o.hint : ""}`.slice(0, w).padEnd(w);
         lines.push(
           i === s.index
-            ? `${SEL}${plain}${RESET}`
+            ? `${this.selBar()}${plain}${RESET}`
             : ` ${o.current ? c.green(marker) : marker}${o.label}${o.hint ? "  " + c.dim(o.hint) : ""}`
         );
       }
@@ -633,7 +653,7 @@ export class Tui implements SessionUI {
       return;
     }
     if (!this.atLineStart) {
-      this.out("\n");
+      this.out(this.hl.flush() + "\n");
       this.atLineStart = true;
     }
   }
@@ -641,7 +661,7 @@ export class Tui implements SessionUI {
   token(text: string): void {
     this.stopSpinner();
     this.lastKind = "content";
-    this.out(text);
+    this.out(this.hl.push(text));
     this.atLineStart = text.endsWith("\n");
   }
 
@@ -740,20 +760,27 @@ export class Tui implements SessionUI {
     this.out(`${c.cyan("→")} ${c.bold(name)} ${c.dim(summarizeArgs(name, args))}\n`);
   }
 
-  toolResult(result: string): void {
+  toolResult(result: string, durationMs?: number): void {
     this.ensureLine();
+    this.lastKind = null;
     const firstLine = result.split("\n")[0] ?? "";
     const isError = firstLine.startsWith("Error");
     const lineCount = result.split("\n").length;
-    const label = isError
-      ? c.red(firstLine.slice(0, 120))
-      : c.dim(firstLine.slice(0, 100) + (lineCount > 1 ? ` (+${lineCount - 1} lines)` : ""));
-    if (isError) this.out(`  ${c.red("✗")} ${label}\n`);
-    else if (result.includes("Warning:")) this.out(`  ${c.yellow("! " + result.slice(result.indexOf("Warning:")).split("\n")[0])}\n`);
+    const took = durationMs !== undefined ? c.dim(" · " + fmtDuration(durationMs)) : "";
+    if (isError) {
+      this.out(`  ${c.red("✗")} ${c.red(firstLine.slice(0, 120))}${took}\n`);
+    } else if (result.includes("Warning:")) {
+      this.out(`  ${c.yellow("! " + result.slice(result.indexOf("Warning:")).split("\n")[0])}${took}\n`);
+    } else {
+      const label = c.dim(firstLine.slice(0, 100) + (lineCount > 1 ? ` (+${lineCount - 1} lines)` : ""));
+      this.out(`  ${c.green("✓")} ${label}${took}\n`);
+    }
+    this.atLineStart = true;
   }
 
   resetResponse(): void {
     this.ensureLine();
+    this.hl.reset();
     this.out(c.dim("[Interrupted response discarded]\n"));
   }
 

@@ -33,6 +33,7 @@ import {
 import { Mode, ToolContext } from "./tools/index";
 import { pickShell } from "./tools/shell";
 import { TaskManager } from "./tools/tasks";
+import { resolveMode } from "./theme";
 import { Tui } from "./tui/tui";
 import { UI } from "./ui";
 import { c } from "./util";
@@ -298,7 +299,7 @@ async function runInteractive(args: CliArgs): Promise<void> {
   });
   process.stdout.write("\r\x1b[2K");
 
-  const tui = new Tui();
+  const tui = new Tui(await resolveMode(cfg.theme));
   if (!chosen) {
     // Nothing on this computer: open the TUI early and offer to look on the
     // network. Until a session exists, esc/ctrl+c while it searches quits.

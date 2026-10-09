@@ -27,26 +27,24 @@ export function plainBrand(version: string): string {
 
 /**
  * Lines of the terminal banner for a terminal `cols` wide: the block logo in
- * the accent colour with "coder vX" beside its last row, or the plain
- * one-liner when the terminal is too narrow for the art.
+ * the accent colour with the version tail beside its last row, the tail on
+ * its own line when only the art fits, or the plain one-liner when the
+ * terminal is too narrow for the art.
  */
 export function terminalLogo(cols: number, version: string): string[] {
   const indent = " ";
-  // Calculate minimum columns needed for logo + tail
-  const tailText = `coder v${version}`;
-  const tailLength = tailText.length;
-  const requiredCols = LOGO_WIDTH + indent.length + 2 + tailLength; // logo width + indent + 2 spaces + tail
-  
-  // Fallback to plain text if terminal is too narrow
-  if (cols < requiredCols) return [plainBrand(version)];
-  
+  if (cols < indent.length + LOGO_WIDTH) return [plainBrand(version)];
+
+  const tailText = `coder ENCHANTED v${version}`;
   const tail = c.dim(c.bold("coder ENCHANTED") + " v" + version);
+  const tailFits = cols >= indent.length + LOGO_WIDTH + 2 + tailText.length;
   const lines = [""];
   LOGO_ROWS.forEach((row, i) => {
     const last = i === LOGO_ROWS.length - 1;
-    lines.push(indent + c.cyan(row) + (last ? "  " + tail : ""));
+    lines.push(indent + c.cyan(row) + (last && tailFits ? "  " + tail : ""));
   });
-  
+  if (!tailFits) lines.push(tail);
+
   lines.push("");
   return lines;
 }

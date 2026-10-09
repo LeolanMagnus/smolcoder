@@ -1,6 +1,6 @@
 // Small shared helpers. Zero dependencies: ANSI codes are written by hand.
 
-const useColor = process.stdout.isTTY && !process.env.NO_COLOR;
+export const useColor = process.stdout.isTTY && !process.env.NO_COLOR;
 
 function wrap(code: string, s: string): string {
   return useColor ? `\x1b[${code}m${s}\x1b[0m` : s;

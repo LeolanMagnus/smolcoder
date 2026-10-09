@@ -15,9 +15,21 @@ test('a local-model semicolon plan remains a checklist after the first done call
   assert.match(await executeTool('plan',{action:'set',steps:['a','b']},{plan}),/^Error:/);
   assert.equal(JSON.stringify(plan.steps),before);
   plan.set('Inspect foo(); preserve API\nRun tests');
-  assert.equal(plan.steps.length,2);
-  assert.equal(plan.steps[0].text,'Inspect foo(); preserve API');
-});
+assert.equal(plan.steps.length,2);
+    assert.equal(plan.steps[0].text,'Inspect foo(); preserve API');
+  });
+
+  test('a step records durationMs when it becomes current and then is marked done', () => {
+    const p = new Plan();
+    p.set('first; second');
+    const now = Date.now();
+    if (p.steps[0].startedAt !== undefined) assert.ok(p.steps[0].startedAt >= now - 10);
+    p.markDone();
+    assert.equal(p.steps[0].done, true);
+    assert.ok(p.steps[0].durationMs !== undefined && p.steps[0].durationMs >= 0);
+    const after = p.steps[1].startedAt;
+    if (after !== undefined) assert.ok(after >= p.steps[0].startedAt!);
+  });
 
 test('working checkpoints survive a JSON session round trip and do not complete a step', () => {
   const p = new Plan();
