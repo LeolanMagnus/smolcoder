@@ -5,7 +5,8 @@
 // visible slice of those rows plus the bottom input frame, and painted with a
 // line diff so a repaint on every streamed token never flickers.
 
-import { ThemeMode } from "../theme";
+import { ansi, ANSI_RESET, paletteOf, ThemeMode } from "../theme";
+import { DiffLine } from "../tools/diff";
 import { c, fmtDuration, useColor } from "../util";
 import { StreamHighlighter } from "./highlight";
 
@@ -20,12 +21,19 @@ export interface ToolInfo {
   took: string;
   err: boolean;
   warn?: boolean;
+  /** Full result body (bounded) shown when the block is expanded. */
+  body?: string;
+  /** File-edit diff derived from the tool arguments. */
+  diff?: DiffLine[];
+  adds?: number;
+  dels?: number;
 }
 
 export type Block =
   | { kind: "line"; text: string; tone: Tone }
   | { kind: "user"; text: string }
   | { kind: "content"; raw: string }
+  | { kind: "thought"; raw: string; expanded: boolean; seconds: number }
   | { kind: "tool"; name: string; argsSummary: string; result?: ToolInfo; expanded: boolean }
   | {
       kind: "plan";
@@ -115,6 +123,26 @@ function tone(text: string, t: Tone): string {
   return c.gray(text);
 }
 
+/** Render a file-edit diff with add/remove colours from the active palette. */
+export function renderDiffLines(lines: DiffLine[], width: number, mode: ThemeMode): string[] {
+  const p = paletteOf(mode);
+  const rows: string[] = [];
+  for (const l of lines) {
+    if (l.kind === "ctx" && l.text === "…") {
+      rows.push(c.dim("  …"));
+      continue;
+    }
+    const color = l.kind === "add" ? p.diffAdd : l.kind === "del" ? p.diffDelete : p.textWeak;
+    const marker = l.kind === "add" ? "+ " : l.kind === "del" ? "- " : "  ";
+    const segs = wrapAnsi(l.text, Math.max(1, width - 2));
+    segs.forEach((seg, i) => {
+      const prefix = i === 0 ? marker : "  ";
+      rows.push(ansi(color) + prefix + seg + ANSI_RESET);
+    });
+  }
+  return rows;
+}
+
 /** Render one block to width-bounded rows (each row fits `width` cells). */
 export function renderBlock(b: Block, width: number, mode: ThemeMode): string[] {
   switch (b.kind) {
@@ -128,15 +156,33 @@ export function renderBlock(b: Block, width: number, mode: ThemeMode): string[] 
     }
     case "content":
       return wrapAnsi(highlightRaw(b.raw, mode), width);
+    case "thought": {
+      const marker = c.dim(b.expanded ? "⌄" : "›");
+      const head = `${marker} ${c.dim("✦ thought")}${b.seconds ? c.dim(` · ${b.seconds}s`) : ""}`;
+      const rows = [truncateVisible(head, width)];
+      if (b.expanded) {
+        for (const r of wrapAnsi(c.dim(b.raw), width)) rows.push(r);
+      }
+      return rows;
+    }
     case "tool": {
       const marker = c.dim(b.expanded ? "⌄" : "›");
-      const head = `${marker} ${c.cyan("→")} ${c.bold(b.name)} ${c.dim(b.argsSummary)}`;
+      const badge =
+        b.result?.diff && (b.result.adds || b.result.dels)
+          ? ` ${c.green("+" + (b.result.adds ?? 0))} ${c.red("-" + (b.result.dels ?? 0))}`
+          : "";
+      const took = b.result?.took ? c.dim(` · ${b.result.took}`) : "";
+      const head = `${marker} ${c.cyan("→")} ${c.bold(b.name)} ${c.dim(b.argsSummary)}${badge}${took}`;
       const rows = wrapAnsi(head, width);
       if (b.expanded && b.result) {
         const glyph = b.result.err ? c.red("✗") : b.result.warn ? c.yellow("!") : c.green("✓");
         const body = b.result.err ? c.red(b.result.summary) : b.result.warn ? c.yellow(b.result.summary) : c.dim(b.result.summary);
         const line = `  ${glyph} ${body}${b.result.took ? c.dim(" · " + b.result.took) : ""}`;
         for (const r of wrapAnsi(line, width)) rows.push(r);
+        if (b.result.diff?.length) rows.push(...renderDiffLines(b.result.diff, width, mode));
+        else if (b.result.body && !b.result.err) {
+          for (const r of wrapAnsi(c.dim(b.result.body), width)) rows.push(r);
+        }
       }
       return rows;
     }
@@ -205,6 +251,18 @@ export class Transcript {
 
   blockAt(index: number): Block | undefined {
     return this.entries[index]?.block;
+  }
+
+  /** Apply a transform to every block matching `pred` (repaints on next flatten). */
+  updateAll(pred: (b: Block) => boolean, map: (b: Block) => Block): void {
+    for (let i = 0; i < this.entries.length; i++) {
+      if (pred(this.entries[i].block)) this.update(i, map(this.entries[i].block));
+    }
+  }
+
+  /** Drop every block matching `pred`. */
+  removeAll(pred: (b: Block) => boolean): void {
+    this.entries = this.entries.filter((e) => !pred(e.block));
   }
 
   get lastIndex(): number {

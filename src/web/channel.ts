@@ -6,6 +6,7 @@
 
 import { Attachment, UserInput } from "../attachments";
 import { Plan } from "../plan";
+import { diffCounts, editDiff } from "../tools/diff";
 import { SelectOption, SessionUI, SlashCommand, summarizeArgs } from "../ui";
 
 export type Event = Record<string, any>;
@@ -242,7 +243,14 @@ export class SessionChannel implements SessionUI {
   }
 
   toolCall(name: string, args: Record<string, any>): void {
-    this.broadcast({ t: "tool", name, summary: summarizeArgs(name, args) });
+    const diff = editDiff(name, args);
+    const counts = diff ? diffCounts(diff) : null;
+    this.broadcast({
+      t: "tool",
+      name,
+      summary: summarizeArgs(name, args),
+      ...(diff ? { diff, adds: counts!.adds, dels: counts!.dels } : {}),
+    });
   }
 
   toolResult(result: string, durationMs?: number): void {

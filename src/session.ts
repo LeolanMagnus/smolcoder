@@ -38,6 +38,8 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "mode", desc: "Set mode (ro / edit / bypass)" },
   { name: "effort", desc: "Set reasoning effort" },
   { name: "plan", desc: "Show the agent's plan" },
+  { name: "details", desc: "Expand or collapse tool output" },
+  { name: "thinking", desc: "Show or hide the model's reasoning" },
   { name: "context", desc: "Show context usage" },
   { name: "compact", desc: "Compact the conversation now" },
   { name: "tasks", desc: "List background tasks" },
@@ -318,6 +320,8 @@ export class Session {
   private readonly prefs: SessionPrefs;
   private readonly help: string;
   private ended = false;
+  private toolDetails = false;
+  private showThinking = true;
 
   constructor(
     readonly ui: SessionUI,
@@ -489,6 +493,16 @@ export class Session {
           case "plan":
             if (toolCtx.plan.exists) ui.println(renderPlan(toolCtx.plan));
             else ui.status("· no plan yet — the agent creates one when it starts a multi-step task");
+            break;
+          case "details":
+            this.toolDetails = !this.toolDetails;
+            ui.setToolDetails?.(this.toolDetails);
+            ui.status(`· tool details ${this.toolDetails ? "expanded" : "collapsed"}`);
+            break;
+          case "thinking":
+            this.showThinking = !this.showThinking;
+            ui.setThinking?.(this.showThinking);
+            ui.status(`· reasoning ${this.showThinking ? "shown" : "hidden"}`);
             break;
           case "tasks":
             ui.println(taskManager.list());

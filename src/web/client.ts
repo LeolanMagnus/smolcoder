@@ -29,6 +29,16 @@ let uidCounter = 0;
 const uid = () => "u" + (++uidCounter) + "_" + Date.now().toString(36);
 
 function el(tag, cls, text) { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; }
+// One colored <pre> per file diff; markers keep the sign visible without color.
+function toolDiffEl(diff) {
+  const pre = el("pre", "result diff");
+  for (const l of diff) {
+    const cls = l.kind === "add" ? "da" : l.kind === "del" ? "dd" : "dc";
+    const mark = l.kind === "add" ? "+ " : l.kind === "del" ? "- " : "  ";
+    pre.appendChild(el("span", cls, mark + l.text + "\n"));
+  }
+  return pre;
+}
 function post(path, body) {
   return fetch(path + "?k=" + k, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body || {}) })
     .then((r) => r.json()).catch(() => ({}));
@@ -373,11 +383,20 @@ function handle(m) {
       endThought(v); v.curText = null;
       const d = el("details", "tool");
       const summary = el("summary"); summary.appendChild(el("span", "name", m.name.replace(/_/g, " "))); summary.appendChild(el("span", "tool-args", m.summary || ""));
+      if (m.diff && m.diff.length) {
+        d._diff = m.diff;
+        const badge = el("span", "diffbadge");
+        badge.appendChild(el("span", "add", "+" + (m.adds || 0)));
+        badge.appendChild(el("span", "del", "-" + (m.dels || 0)));
+        summary.appendChild(badge);
+      }
       d.appendChild(summary); v.curTool = d; add(v, d); break;
     }
     case "result": {
       endThought(v); v.curText = null;
-      const body = el("pre", "result" + (m.err ? " err" : ""), m.body || m.line);
+      const body = (!m.err && v.curTool && v.curTool._diff)
+        ? toolDiffEl(v.curTool._diff)
+        : el("pre", "result" + (m.err ? " err" : ""), m.body || m.line);
       if (v.curTool) {
         const sum = v.curTool.querySelector("summary");
         if (sum && m.ms !== undefined) sum.appendChild(el("span", "took", "· " + fmtMs(m.ms)));

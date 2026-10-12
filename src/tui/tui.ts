@@ -6,6 +6,7 @@
 
 import { Plan } from "../plan";
 import { ThemeMode } from "../theme";
+import { diffCounts, editDiff } from "../tools/diff";
 import { SelectOption, SessionUI, SlashCommand, summarizeArgs } from "../ui";
 import { c, fmtDuration } from "../util";
 import { LineEditor, layoutBuffer } from "./editor";
@@ -68,6 +69,15 @@ export class Tui implements SessionUI {
   private currentContent: number | null = null;
   private currentPlan: number | null = null;
   private pendingTool: number | null = null;
+  private pendingDiff: import("../tools/diff").DiffLine[] | null = null;
+  private currentThought: number | null = null;
+  private thoughtStart = 0;
+  private thoughtRaw = "";
+  private showThinking = true;
+  private toolDetails = false;
+  /** Messages typed while the agent is working, run after the current turn. */
+  private inputQueue: string[] = [];
+  private queueEd = new LineEditor();
   private scrollOffset = 0;
   /** A transient status row (spinner / reasoning ticker / argument progress)
    * pinned above the input frame, and what currently owns it. */
@@ -99,11 +109,6 @@ export class Tui implements SessionUI {
   } | null = null;
   private spinnerTimer: NodeJS.Timeout | null = null;
   private spinnerActive = false;
-  private tickerOn = false;
-  private tickerTimer: NodeJS.Timeout | null = null;
-  private tickerFrame = 0;
-  private thinkBuf = "";
-  private thinkStart = 0;
   private progressTimer: NodeJS.Timeout | null = null;
   private progressActive = false;
   private progressName = "";
@@ -148,7 +153,7 @@ export class Tui implements SessionUI {
 
   close(): void {
     this.stopSpinner();
-    this.endTicker();
+    this.finishThought();
     this.stopProgress();
     process.stdout.write("\x1b[?1006l\x1b[?1000l\x1b[?2004l\x1b[?1049l\x1b[?25h");
     if (this.onDataFn) process.stdin.off("data", this.onDataFn);
@@ -163,16 +168,23 @@ export class Tui implements SessionUI {
     this.ed.clear();
     this.histIdx = -1;
     this.menuIndex = 0;
-    this.state = "idle";
     this.transient = null;
     this.scrollOffset = 0;
+    this.state = "idle";
+    // A message typed while the previous turn ran is taken first. It was
+    // already echoed when queued, so only the input state is reset here.
+    if (this.inputQueue.length) {
+      const next = this.inputQueue.shift()!;
+      this.render();
+      return Promise.resolve(next);
+    }
     this.render();
     return new Promise((res) => (this.submitResolve = res));
   }
 
   select(title: string, options: SelectOption[]): Promise<number | null> {
     this.stopSpinner();
-    this.endTicker();
+    this.finishThought();
     this.stopProgress();
     this.state = "select";
     return new Promise((resolve) => {
@@ -183,7 +195,7 @@ export class Tui implements SessionUI {
 
   prompt(title: string, placeholder = ""): Promise<string | null> {
     this.stopSpinner();
-    this.endTicker();
+    this.finishThought();
     this.stopProgress();
     this.state = "prompt";
     return new Promise((resolve) => {
@@ -194,7 +206,7 @@ export class Tui implements SessionUI {
 
   confirmCommand(command: string, reason?: string): Promise<"yes" | "no" | "always"> {
     this.stopSpinner();
-    this.endTicker();
+    this.finishThought();
     this.stopProgress();
     this.state = "confirm";
     return new Promise((resolve) => {
@@ -234,8 +246,8 @@ export class Tui implements SessionUI {
         case "prompt":
           this.keyPrompt(key);
           break;
-        case "hidden": // agent running
-          if (key.type === "esc" || key.type === "ctrlc") this.onCancel?.();
+        case "hidden": // agent running — type to queue a follow-up message
+          this.keyHidden(key);
           break;
       }
     }
@@ -252,7 +264,7 @@ export class Tui implements SessionUI {
     const idx = this.ownerRow[m.y - 1];
     if (idx === undefined || idx < 0) return;
     const b = this.transcript.blockAt(idx);
-    if (b && (b.kind === "tool" || b.kind === "plan")) {
+    if (b && (b.kind === "tool" || b.kind === "plan" || b.kind === "thought")) {
       this.transcript.update(idx, { ...b, expanded: !b.expanded });
       this.render();
     }
@@ -371,6 +383,65 @@ export class Tui implements SessionUI {
     const resolve = this.submitResolve;
     this.submitResolve = null;
     resolve?.(text);
+  }
+
+  /** While the agent runs: edit the follow-up queue buffer. Enter queues the
+   * message to run after the current turn; esc clears it, then cancels. */
+  private keyHidden(key: Key): void {
+    const ed = this.queueEd;
+    switch (key.type) {
+      case "char":
+      case "text":
+        ed.insert(key.text!);
+        break;
+      case "backspace":
+        ed.backspace();
+        break;
+      case "delete":
+        ed.del();
+        break;
+      case "left":
+        ed.left();
+        break;
+      case "right":
+        ed.right();
+        break;
+      case "home":
+      case "ctrla":
+        ed.home();
+        break;
+      case "end":
+      case "ctrle":
+        ed.end();
+        break;
+      case "ctrlu":
+        ed.killToLineStart();
+        break;
+      case "ctrlw":
+        ed.deleteWordBack();
+        break;
+      case "enter": {
+        const text = ed.buffer.trim();
+        if (text) {
+          ed.clear();
+          this.inputQueue.push(text);
+          this.transcript.add({ kind: "line", text: "", tone: "status" });
+          this.transcript.add({ kind: "user", text });
+          this.notice = null;
+        }
+        break;
+      }
+      case "esc":
+        if (ed.buffer.length > 0) ed.clear();
+        else this.onCancel?.();
+        break;
+      case "ctrlc":
+        this.onCancel?.();
+        break;
+      default:
+        break;
+    }
+    this.render();
   }
 
   private historyPrev(): void {
@@ -574,6 +645,22 @@ export class Tui implements SessionUI {
       }
       lines.push(boxRow(this.getStatus(), w));
       if (this.notice) lines.push(" " + c.yellow(this.notice));
+    } else if (this.state === "hidden") {
+      // The agent is working: keep the input visible so the user can queue the
+      // next message, with the context/status line under it.
+      const inputW = w - 2;
+      const hint = this.inputQueue.length ? ` · ${this.inputQueue.length} queued` : "";
+      if (this.queueEd.buffer.length === 0) {
+        curRow = lines.length;
+        curCol = 2;
+        lines.push(boxRow(c.dim(("type to queue a message…" + hint).slice(0, inputW)), w));
+      } else {
+        const lay = layoutBuffer(this.queueEd.buffer, this.queueEd.cursor, inputW);
+        curRow = lines.length + lay.curRow;
+        curCol = 2 + lay.curCol;
+        for (const row of lay.rows) lines.push(boxRow(row, w));
+      }
+      lines.push(boxRow(this.getStatus(), w));
     } else if (this.state === "select" && this.sel) {
       const s = this.sel;
       const sw = Math.min(w, 64);
@@ -628,7 +715,7 @@ export class Tui implements SessionUI {
     const w = this.width();
     const total = this.rows();
     const { lines, owner } = this.transcript.flatten(w, this.mode);
-    const frame = this.state === "hidden" ? { lines: [] as string[], curRow: -1, curCol: 0 } : this.frameLines(w);
+    const frame = this.frameLines(w);
     const transientRows = this.transient ? 1 : 0;
     const bottom = frame.lines.length + transientRows;
     const viewH = Math.max(0, total - bottom);
@@ -688,7 +775,7 @@ export class Tui implements SessionUI {
 
   token(text: string): void {
     this.stopSpinner();
-    this.endTicker();
+    this.finishThought();
     this.stopProgress();
     if (this.currentContent === null) {
       this.currentContent = this.transcript.add({ kind: "content", raw: "" });
@@ -698,51 +785,36 @@ export class Tui implements SessionUI {
     this.render();
   }
 
-  /** Reasoning streams as ONE grey transient row, cropped to the latest tail —
-   * a live, ticking pulse cleared the moment real output starts. */
+  /** Reasoning streams into a collapsible block (like opencode), kept after the
+   * turn so it can be reviewed; hidden by default when /thinking is off. */
   thinking(text: string): void {
     this.stopSpinner();
     if (this.state !== "hidden") return;
-    if (!this.tickerOn) {
-      this.tickerOn = true;
-      this.transientKind = "ticker";
-      this.thinkStart = Date.now();
-      this.thinkBuf = "";
-      this.tickerTimer = setInterval(() => {
-        if (this.tickerOn) this.renderTicker();
-      }, 100);
+    if (!this.showThinking) return;
+    if (this.currentThought === null) {
+      this.thoughtStart = Date.now();
+      this.thoughtRaw = "";
+      this.currentThought = this.transcript.add({ kind: "thought", raw: "", expanded: false, seconds: 0 });
     }
-    this.thinkBuf += text;
-    if (this.thinkBuf.length > 4000) this.thinkBuf = this.thinkBuf.slice(-2000);
-    this.renderTicker();
-  }
-
-  private renderTicker(): void {
-    const frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-    const w = Math.max(20, (process.stdout.columns || 80) - 4);
-    const clean = this.thinkBuf.replace(/\s+/g, " ").trim();
-    const secs = Math.floor((Date.now() - this.thinkStart) / 1000);
-    const suffix = ` ${secs}s`;
-    const avail = Math.max(8, w - 2 - suffix.length);
-    const tail = clean.length > avail ? "…" + clean.slice(-(avail - 1)) : clean;
-    const glyph = c.gray(frames[this.tickerFrame++ % frames.length]);
-    this.transient = glyph + " " + c.gray("✦ " + tail + suffix);
+    this.thoughtRaw += text;
+    this.transcript.update(this.currentThought, {
+      kind: "thought",
+      raw: this.thoughtRaw,
+      expanded: false,
+      seconds: Math.floor((Date.now() - this.thoughtStart) / 1000),
+    });
     this.render();
   }
 
-  private endTicker(): void {
-    if (this.tickerTimer) {
-      clearInterval(this.tickerTimer);
-      this.tickerTimer = null;
+  /** Freeze the current reasoning block's elapsed time. */
+  private finishThought(): void {
+    if (this.currentThought === null) return;
+    const block = this.transcript.blockAt(this.currentThought);
+    if (block?.kind === "thought") {
+      this.transcript.update(this.currentThought, { ...block, seconds: Math.floor((Date.now() - this.thoughtStart) / 1000) });
     }
-    if (this.tickerOn) {
-      this.tickerOn = false;
-      this.thinkBuf = "";
-      if (this.transientKind === "ticker") {
-        this.transient = null;
-        this.transientKind = null;
-      }
-    }
+    this.currentThought = null;
+    this.thoughtRaw = "";
   }
 
   /** Called as a tool call's arguments stream in: a live "writing X · Nk · Ns"
@@ -750,7 +822,7 @@ export class Tui implements SessionUI {
   toolCallProgress(name: string, chars: number): void {
     this.stopSpinner();
     if (this.state !== "hidden") return;
-    this.endTicker();
+    this.finishThought();
     this.progressName = name;
     this.progressChars = chars;
     if (!this.progressActive) {
@@ -787,21 +859,22 @@ export class Tui implements SessionUI {
 
   toolCall(name: string, args: Record<string, any>): void {
     this.stopSpinner();
-    this.endTicker();
+    this.finishThought();
     this.stopProgress();
     this.currentContent = null;
+    this.pendingDiff = editDiff(name, args);
     this.pendingTool = this.transcript.add({
       kind: "tool",
       name,
       argsSummary: summarizeArgs(name, args),
-      expanded: false,
+      expanded: this.toolDetails,
     });
     this.render();
   }
 
   toolResult(result: string, durationMs?: number): void {
     this.stopSpinner();
-    this.endTicker();
+    this.finishThought();
     this.stopProgress();
     const lines = result.split("\n");
     const first = lines[0] ?? "";
@@ -812,11 +885,18 @@ export class Tui implements SessionUI {
     else if (warn) summary = result.slice(result.indexOf("Warning:")).split("\n")[0];
     else summary = first.slice(0, 100) + (lines.length > 1 ? ` (+${lines.length - 1} lines)` : "");
     const took = durationMs !== undefined ? fmtDuration(durationMs) : "";
+    // A failed edit must not advertise changes that were never written.
+    const diff = err ? undefined : this.pendingDiff ?? undefined;
+    const counts = diff ? diffCounts(diff) : { adds: 0, dels: 0 };
+    this.pendingDiff = null;
 
     if (this.pendingTool !== null) {
       const b = this.transcript.blockAt(this.pendingTool);
       if (b && b.kind === "tool") {
-        this.transcript.update(this.pendingTool, { ...b, result: { summary, took, err, warn } });
+        this.transcript.update(this.pendingTool, {
+          ...b,
+          result: { summary, took, err, warn, body: err ? undefined : result, diff, adds: counts.adds, dels: counts.dels },
+        });
       }
       this.pendingTool = null;
     } else {
@@ -827,19 +907,23 @@ export class Tui implements SessionUI {
 
   resetResponse(): void {
     this.stopSpinner();
-    this.endTicker();
+    this.finishThought();
     this.stopProgress();
-    while (this.transcript.lastIndex >= 0 && this.transcript.blockAt(this.transcript.lastIndex)?.kind === "content") {
+    while (this.transcript.lastIndex >= 0) {
+      const kind = this.transcript.blockAt(this.transcript.lastIndex)?.kind;
+      if (kind !== "content" && kind !== "thought") break;
       this.transcript.pop();
     }
     this.currentContent = null;
+    this.currentThought = null;
+    this.thoughtRaw = "";
     this.transcript.add({ kind: "line", text: "[Interrupted response discarded]", tone: "status" });
     this.render();
   }
 
   println(s = ""): void {
     this.stopSpinner();
-    this.endTicker();
+    this.finishThought();
     this.stopProgress();
     this.transcript.add({ kind: "line", text: s, tone: "status" });
     this.render();
@@ -851,7 +935,7 @@ export class Tui implements SessionUI {
 
   turnEnd(label: string): void {
     this.stopSpinner();
-    this.endTicker();
+    this.finishThought();
     this.stopProgress();
     this.currentContent = null;
     this.pendingTool = null;
@@ -862,7 +946,7 @@ export class Tui implements SessionUI {
 
   planUpdated(plan: Plan): void {
     this.stopSpinner();
-    this.endTicker();
+    this.finishThought();
     this.stopProgress();
     this.currentContent = null;
     const block: Block = {
@@ -882,9 +966,31 @@ export class Tui implements SessionUI {
     this.render();
   }
 
+  /** `/details`: expand or collapse every tool block (like opencode). */
+  setToolDetails(expanded: boolean): void {
+    this.toolDetails = expanded;
+    this.transcript.updateAll(
+      (b) => b.kind === "tool",
+      (b) => ({ ...(b as Extract<Block, { kind: "tool" }>), expanded })
+    );
+    this.render();
+  }
+
+  /** `/thinking`: show or hide reasoning blocks. Hiding removes the ones already
+   * in the transcript; showing applies to reasoning from here on. */
+  setThinking(visible: boolean): void {
+    this.showThinking = visible;
+    if (!visible) {
+      this.transcript.removeAll((b) => b.kind === "thought");
+      this.currentThought = null;
+      this.thoughtRaw = "";
+    }
+    this.render();
+  }
+
   warn(s: string): void {
     this.stopSpinner();
-    this.endTicker();
+    this.finishThought();
     this.stopProgress();
     this.transcript.add({ kind: "line", text: s, tone: "warn" });
     this.render();
@@ -892,7 +998,7 @@ export class Tui implements SessionUI {
 
   error(s: string): void {
     this.stopSpinner();
-    this.endTicker();
+    this.finishThought();
     this.stopProgress();
     this.transcript.add({ kind: "line", text: s, tone: "error" });
     this.render();

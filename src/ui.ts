@@ -5,6 +5,7 @@
 import * as readline from "readline";
 import { UserInput } from "./attachments";
 import { Plan } from "./plan";
+import { DiffLine, editDiff } from "./tools/diff";
 import { c, fmtDuration } from "./util";
 
 /** What the agent loop needs from a UI — implemented by the plain UI (used in
@@ -62,6 +63,10 @@ export interface SessionUI extends AgentUI {
   /** Ask for one line of text (an address, a name); null when cancelled. */
   prompt(title: string, placeholder?: string): Promise<string | null>;
   refresh(): void;
+  /** Expand or collapse every tool block in the transcript (opencode-style /details). */
+  setToolDetails?(expanded: boolean): void;
+  /** Show or hide reasoning blocks (opencode-style /thinking). */
+  setThinking?(visible: boolean): void;
 }
 
 /** Shared checklist renderer: ✔ done (dim) · ▶ current (cyan) · ○ pending. */
@@ -84,6 +89,7 @@ export class UI implements AgentUI {
   private spinnerTimer: NodeJS.Timeout | null = null;
   private spinnerActive = false;
   private atLineStart = true;
+  private pendingDiff: DiffLine[] | null = null;
   onInterrupt: (() => void) | null = null;
 
   constructor() {
@@ -184,6 +190,7 @@ export class UI implements AgentUI {
 
   toolCall(name: string, args: Record<string, any>): void {
     const summary = summarizeArgs(name, args);
+    this.pendingDiff = editDiff(name, args);
     this.meta(`${c.cyan("→")} ${c.bold(name)} ${c.dim(summary)}`);
   }
 
@@ -196,6 +203,19 @@ export class UI implements AgentUI {
       ? c.red(firstLine.slice(0, 120))
       : c.dim(firstLine.slice(0, 100) + (lines > 1 ? ` (+${lines - 1} lines)` : ""));
     this.meta(`  ${isError ? c.red("✗") : c.green("✓")} ${label}${took}`);
+    if (!isError && this.pendingDiff?.length) this.printDiff(this.pendingDiff);
+    this.pendingDiff = null;
+  }
+
+  /** File-edit diff to stderr, capped so headless logs stay readable. */
+  private printDiff(diff: DiffLine[]): void {
+    const shown = diff.slice(0, 200);
+    for (const l of shown) {
+      const marker = l.kind === "add" ? "+ " : l.kind === "del" ? "- " : "  ";
+      const color = l.kind === "add" ? c.green : l.kind === "del" ? c.red : c.dim;
+      process.stderr.write("    " + color(marker + l.text) + "\n");
+    }
+    if (diff.length > shown.length) process.stderr.write(c.dim(`    … ${diff.length - shown.length} more diff lines`) + "\n");
   }
 
   println(s = ""): void {

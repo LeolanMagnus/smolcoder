@@ -3,7 +3,7 @@
 // opencode's default dark theme shifted toward blue, shared with the terminal.
 
 import { LOGO_ROWS } from "../logo";
-import { LIGHT_PALETTE, MARKDOWN, markdownOf } from "../theme";
+import { DARK_PALETTE, LIGHT_PALETTE, MARKDOWN, markdownOf } from "../theme";
 
 const LIGHT_MD = markdownOf("light");
 
@@ -16,6 +16,7 @@ export const STYLES = String.raw`
     --bg: #111416; --fg: #e1e5e7; --dim: #a0a8ae; --gray: #79838b;
     --accent: #35bfd4; --yellow: #e0af68; --red: #f7768e; --green: #9ece6a;
     --magenta: #bb9af7; --box: #14181a; --sel: #1a7f94; --line: #232a2f; --side: #0e1113;
+    --diff-add: ${DARK_PALETTE.diffAdd}; --diff-del: ${DARK_PALETTE.diffDelete};
     /* The model's reply, one blue-shifted theme for both surfaces. */
     --md-text: ${MARKDOWN.text}; --md-heading: ${MARKDOWN.heading};
     --md-link: ${MARKDOWN.link}; --md-link-text: ${MARKDOWN.linkText};
@@ -293,10 +294,17 @@ export const STYLES = String.raw`
   .tool summary::before { content: "›"; color: var(--gray); }
   .tool[open] summary::before { content: "⌄"; }
   .tool .name { color: var(--dim); font-weight: 400; white-space: nowrap; }
+  .tool .diffbadge { display: inline-flex; gap: 6px; font-weight: 600; flex: none; }
+  .tool .diffbadge .add { color: var(--diff-add); }
+  .tool .diffbadge .del { color: var(--diff-del); }
   .tool .tool-args { white-space: nowrap; text-overflow: ellipsis; overflow: hidden; color: var(--gray); }
   .tool.finished .name { color: #b9c6c7; }
   .tool.failed .name, .tool.failed summary::before { color: var(--red); }
   .result { margin: 4px 0 12px 16px; border: 1px solid var(--line); border-radius: 6px; background: #0e1214; padding: 12px; max-height: 280px; overflow: auto; white-space: pre-wrap; }
+  .result.diff { white-space: pre; tab-size: 2; }
+  .result.diff .da { color: var(--diff-add); }
+  .result.diff .dd { color: var(--diff-del); }
+  .result.diff .dc { color: var(--gray); }
   .plan { border: 1px solid var(--line); border-radius: 8px; padding: 12px 16px; background: transparent; line-height: 1.9; }
   .thought, .turnend { font-size: 12px; }
   .turnend { margin-top: 20px; margin-bottom: 20px; }
@@ -357,6 +365,7 @@ export const STYLES = String.raw`
       --bg: #ffffff; --fg: #1f2328; --dim: #4d5761; --gray: #6e7781;
       --accent: #0969da; --yellow: #9a6700; --red: #cf222e; --green: #1a7f37;
       --magenta: #8250df; --box: #f6f8fa; --sel: #cfe3ff; --line: #d8dee4; --side: #f6f8fa;
+      --diff-add: ${LIGHT_PALETTE.diffAdd}; --diff-del: ${LIGHT_PALETTE.diffDelete};
       --md-text: ${LIGHT_MD.text}; --md-heading: ${LIGHT_MD.heading};
       --md-link: ${LIGHT_MD.link}; --md-link-text: ${LIGHT_MD.linkText};
       --md-code: ${LIGHT_MD.code}; --md-code-block: ${LIGHT_MD.codeBlock};
