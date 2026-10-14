@@ -14,13 +14,41 @@ import { truncateMiddle } from "../util";
 import { searchFilesBounded } from "./search-worker";
 import { webFetch } from "./web";
 
-export type Mode = "ro" | "edit" | "bypass";
+export type Mode = "plan" | "build" | "auto";
 
 export const MODE_LABELS: Record<Mode, string> = {
-  ro: "read-only",
-  edit: "edit",
-  bypass: "bypass permissions",
+  plan: "plan",
+  build: "build",
+  auto: "auto",
 };
+
+/** Cycle order for shift+tab: plan → build → auto. */
+export const MODE_ORDER: Mode[] = ["plan", "build", "auto"];
+
+/** Coerce a historical or alias mode string into a current Mode. Old configs
+ * and saved sessions may still carry names from earlier releases:
+ * ro/read-only → plan, edit/write → build, bypass/yolo → auto. */
+export function normalizeMode(value: unknown, fallback: Mode = "build"): Mode {
+  switch (String(value ?? "").toLowerCase()) {
+    case "plan":
+    case "ro":
+    case "read-only":
+    case "readonly":
+      return "plan";
+    case "build":
+    case "edit":
+    case "write":
+      return "build";
+    case "auto":
+    case "bypass":
+    case "bypass-permissions":
+    case "yolo":
+    case "y":
+      return "auto";
+    default:
+      return fallback;
+  }
+}
 
 const TOOL_RESULT_CAP = 10000; // chars — final safety net over per-tool caps
 
@@ -152,7 +180,7 @@ export function buildToolSpecs(mode: Mode): ToolSpec[] {
     },
   ];
 
-  if (mode === "ro") return read;
+  if (mode === "plan") return read;
   return [...read, ...write, ...exec];
 }
 
@@ -265,8 +293,8 @@ Warning: ${warning} Fix this before moving on (use edit_file).` : "";
   }
 }
 
-/** The command a call would run, if it is an exec call (edit mode may gate it;
- * bypass never asks; in ro mode the tool does not exist). */
+/** The command a call would run, if it is an exec call (build mode may gate it;
+ * auto never asks; in plan mode the tool does not exist). */
 export function commandOf(name: string, args: Record<string, any>): string | null {
   if (name === "run_command") return String(args.command ?? "");
   if (name === "task" && args.action === "start") return String(args.command ?? "");

@@ -17,7 +17,7 @@ import { LmStudioProvider } from "./providers/lmstudio";
 import { OllamaProvider } from "./providers/ollama";
 import { Effort, Msg, Provider } from "./providers/types";
 import { SessionBody, SessionMeta, SessionStore, workspaceKey } from "./store";
-import { Mode, MODE_LABELS, ToolContext } from "./tools/index";
+import { Mode, MODE_LABELS, MODE_ORDER, normalizeMode, ToolContext } from "./tools/index";
 import { pickShell } from "./tools/shell";
 import { TaskManager } from "./tools/tasks";
 import { renderPlan, SelectOption, SessionUI, SlashCommand, summarizeArgs } from "./ui";
@@ -37,7 +37,7 @@ export interface SessionPrefs {
 
 export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "models", desc: "Switch model · add models from other machines" },
-  { name: "mode", desc: "Set mode (ro / edit / bypass)" },
+  { name: "mode", desc: "Set mode (plan / build / auto)" },
   { name: "effort", desc: "Set reasoning effort" },
   { name: "plan", desc: "Show the agent's plan" },
   { name: "details", desc: "Expand or collapse tool output" },
@@ -53,7 +53,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "exit", desc: "Quit smolcoder (web: close this session)" },
 ];
 
-export const MODE_ORDER: Mode[] = ["ro", "edit", "bypass"];
+export { MODE_ORDER };
 
 // ---- model selection helpers (shared with the headless path) --------------
 
@@ -151,8 +151,8 @@ export function fmtTokens(n: number): string {
 
 function modeColored(mode: Mode): string {
   const label = MODE_LABELS[mode];
-  if (mode === "bypass") return c.red(c.bold(label));
-  if (mode === "ro") return c.magenta(c.bold(label));
+  if (mode === "auto") return c.red(c.bold(label));
+  if (mode === "plan") return c.magenta(c.bold(label));
   return c.cyan(c.bold(label));
 }
 
@@ -390,7 +390,7 @@ export class Session {
     this.prefs = prefs;
     this.help = opts.help;
     this.store = opts.store;
-    const mode0 = prefs.mode ?? cfg.lastMode ?? "edit";
+    const mode0 = prefs.mode ?? cfg.lastMode ?? "build";
     this.effort = prefs.effort !== undefined ? prefs.effort : (cfg.effort ?? null);
 
     const provider = makeProvider(chosen);
@@ -767,26 +767,29 @@ export class Session {
 
   private async setMode(arg?: string): Promise<void> {
     const { ui, agent } = this;
-    let next: Mode | undefined =
-      arg === "ro"
-        ? "ro"
-        : arg === "edit" || arg === "write"
-          ? "edit"
-          : arg === "bypass" || arg === "yolo"
-            ? "bypass"
-            : undefined;
+    const v = (arg ?? "").toLowerCase();
+    const aliases: Record<string, Mode> = {
+      plan: "plan", ro: "plan", "read-only": "plan", readonly: "plan",
+      build: "build", edit: "build", write: "build", e: "build", w: "build",
+      auto: "auto", bypass: "auto", "bypass-permissions": "auto", yolo: "auto", b: "auto", y: "auto",
+    };
+    let next: Mode | undefined = arg ? aliases[v] : undefined;
     if (!next) {
       const idx = await ui.select("Select mode", [
-        { label: "read-only", hint: "read and search files only", current: agent.mode === "ro" },
         {
-          label: "edit",
-          hint: "edit files; run commands inside the workspace, ask y/n for anything outside it",
-          current: agent.mode === "edit",
+          label: "plan",
+          hint: "research and design only; read and search files, change nothing",
+          current: agent.mode === "plan",
         },
         {
-          label: "bypass permissions",
+          label: "build",
+          hint: "edit files; run commands inside the workspace, ask y/n for anything outside it",
+          current: agent.mode === "build",
+        },
+        {
+          label: "auto",
           hint: "full access, never asks for approval",
-          current: agent.mode === "bypass",
+          current: agent.mode === "auto",
         },
       ]);
       if (idx === null) return;
@@ -969,8 +972,9 @@ export class Session {
       }
       this.applyModel(next);
     }
-    // A saved bypass mode is never inherited silently (matches the config).
-    const mode: Mode = s.mode === "bypass" ? "edit" : (s.mode ?? agent.mode);
+    // A saved auto (bypass) mode is never inherited silently (matches the config).
+    const savedMode = normalizeMode(s.mode, agent.mode);
+    const mode: Mode = savedMode === "auto" ? "build" : savedMode;
     this.effort = s.effort !== undefined ? s.effort : this.effort;
     agent.setMode(mode, this.sysPrompt(mode));
     agent.provider.setEffort(this.effort);
@@ -983,8 +987,8 @@ export class Session {
     ui.replayConversation?.(agent.messages, this.title);
     if (toolCtx.plan.exists) ui.planUpdated(toolCtx.plan);
     this.persist();
-    if (s.mode === "bypass") {
-      ui.warn("· resumed in edit mode — bypass is never restored; earlier command approvals are not remembered either");
+    if (normalizeMode(s.mode, "build") === "auto") {
+      ui.warn("· resumed in build mode — auto is never restored; earlier command approvals are not remembered either");
     }
     ui.status(`· resumed "${this.title}"`);
   }

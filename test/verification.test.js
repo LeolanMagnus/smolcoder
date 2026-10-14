@@ -31,7 +31,7 @@ function setup(t, chat, verification) {
   const ui = {token(){},thinking(){},toolCall(){},toolResult(){},println(){},status(){},warn(){},error(){},startSpinner(){},stopSpinner(){},turnEnd(){},planUpdated(){}};
   const provider = {label:'fake',modelId:'fake',contextWindow:8000,maxOutputTokens:2000,setEffort(){},effortLabel(){return null;},chat};
   const bus=new EventBus(), manager=new ContextManager(8000,2000);
-  const agent=new Agent(provider,'edit','sys',ctx,manager,bus,ui,false,30,verification);
+  const agent=new Agent(provider,'build','sys',ctx,manager,bus,ui,false,30,verification);
   return {agent,workspace,bus,manager};
 }
 const answer = () => ({content:'Done',toolCalls:[]});
@@ -231,9 +231,9 @@ test('after acceptance fails, periodic checks use that oracle and a final summar
   assert.equal(progressChecks,0);assert.equal(calls,26);
 });
 
-test('acceptance commands cannot run after switching to read-only',async t=>{
+test('acceptance commands cannot run after switching to plan',async t=>{
   const {agent,workspace}=setup(t,async()=>answer(),{command:'node -e "require(\'fs\').writeFileSync(\'bad\',\'x\')"'});
-  agent.setMode('ro','Read only');await assert.rejects(agent.runTurn('Inspect'),/unavailable in read-only/);
+  agent.setMode('plan','Plan mode');await assert.rejects(agent.runTurn('Inspect'),/unavailable in plan mode/);
   assert.equal(fs.existsSync(path.join(workspace,'bad')),false);
 });
 

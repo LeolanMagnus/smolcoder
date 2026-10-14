@@ -186,7 +186,7 @@ export const STYLES = String.raw`
   #actionbtn.stop:hover { border-color: var(--red); color: var(--red); }
   #status { margin-top: 6px; font-size: 12.5px; color: var(--dim); }
   #status .mode { font-weight: 700; }
-  #status .mode.edit { color: var(--accent); } #status .mode.bypass { color: var(--red); } #status .mode.ro { color: var(--magenta); }
+  #status .mode.build { color: var(--accent); } #status .mode.auto { color: var(--red); } #status .mode.plan { color: var(--magenta); }
   #status .eff { color: var(--yellow); } #status .plan-chip { color: var(--accent); } #status .plan-chip.done { color: var(--green); }
   #hintrow { font-size: 12px; color: var(--gray); margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 

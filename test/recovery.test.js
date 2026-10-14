@@ -39,7 +39,7 @@ const ui = () => ({ token() {}, thinking() {}, toolCall() {}, toolResult() {}, p
 const fake = (fn) => ({ label: 'fake', modelId: 'fake', contextWindow: 8000, maxOutputTokens: 2000, setEffort() {}, effortLabel() { return null; }, chat: fn });
 function agentFor(provider, view = ui(), max = 10) {
   const ctx = { workspace: process.cwd(), plan: new Plan(), taskManager: { runningSummary() { return []; } }, filesTouched: new Set(), commandsRun: [] };
-  return new Agent(provider, 'ro', 'sys', ctx, new ContextManager(8000, 2000), new EventBus(), view, false, max);
+  return new Agent(provider, 'plan', 'sys', ctx, new ContextManager(8000, 2000), new EventBus(), view, false, max);
 }
 
 test('providers reject incomplete, malformed and error streams; complete streams preserve usage', async (t) => {
@@ -191,10 +191,10 @@ test('loaded-window shrink is applied before inference, including its output res
 
 test('a mode downgrade while approval is pending prevents command execution', async () => {
   const view = ui(); let executions = 0; let a;
-  view.confirmCommand = async () => { a.setMode('ro', 'read-only'); return 'yes'; };
+  view.confirmCommand = async () => { a.setMode('plan', 'plan mode'); return 'yes'; };
   const p = fake(async () => ({ content: 'done', toolCalls: [] }));
   const ctx = { workspace: process.cwd(), plan: new Plan(), taskManager: { async startWithEarlyOutput() { executions++; return 'started'; } }, filesTouched: new Set(), commandsRun: [] };
-  a = new Agent(p, 'edit', 'sys', ctx, new ContextManager(8000, 2000), new EventBus(), view, true);
+  a = new Agent(p, 'build', 'sys', ctx, new ContextManager(8000, 2000), new EventBus(), view, true);
   const result = await a.gateAndExecute('task', { action: 'start', command: 'npm install -g example' }, new AbortController().signal);
   assert.equal(executions, 0); assert.match(result, /no longer available/);
 });

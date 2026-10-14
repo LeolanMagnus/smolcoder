@@ -40,9 +40,9 @@ export function buildSystemPrompt(opts: {
     process.platform === "win32" ? "Windows" : process.platform === "darwin" ? "macOS" : "Linux";
 
   const modeLine =
-    opts.mode === "ro"
-      ? "You are in read-only mode: you can read and search files but not change anything."
-      : opts.mode === "edit"
+    opts.mode === "plan"
+      ? "You are in plan mode: read and search freely, but make no changes and run no commands. Investigate the codebase and present a concrete, step-by-step plan."
+      : opts.mode === "build"
         ? "Read, edit and run commands inside the workspace. Commands reaching outside it need approval; keep scratch files in .scratch/."
         : "You have full access to files and commands; nothing asks the user for approval.";
 

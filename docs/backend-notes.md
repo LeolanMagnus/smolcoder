@@ -50,7 +50,7 @@ harness sends and from load settings:
 
 ## End-to-end: the same Minecraft build on both backends
 
-One headless run each (`smol -p "<prompt>" --mode bypass --effort off`), same
+One headless run each (`smol -p "<prompt>" --mode auto --effort off`), same
 model weights, same prompt (procedural voxel terrain, first-person controls, block
 place/remove, three.js from a CDN, then serve it). Nobody typed "continue".
 

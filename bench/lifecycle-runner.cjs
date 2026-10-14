@@ -63,7 +63,7 @@ async function main() {
   const taskManager = new TaskManager(workspace);
   const ctx = {workspace,taskManager,plan:new Plan(),filesTouched:new Set(),commandsRun:[]};
   const manager = new ContextManager(chosen.contextWindow,provider.maxOutputTokens);
-  const system = buildSystemPrompt({workspace,mode:'edit',shellLabel:pickShell().label,agentsMd:loadAgentsMd(workspace)});
+  const system = buildSystemPrompt({workspace,mode:'build',shellLabel:pickShell().label,agentsMd:loadAgentsMd(workspace)});
   let streamedTextChars = 0, streamedThinkingChars = 0;
   const ui = {
     token(text) {streamedTextChars += text.length;}, thinking(text) {streamedThinkingChars += text.length;}, resetResponse() {emit('reset_response');},
@@ -80,7 +80,7 @@ async function main() {
   };
   const verifyFile = option('verify-file',undefined);
   const verification = verifyFile ? { command: fs.readFileSync(verifyFile,'utf8').trim(), maxAttempts:Number(option('verify-attempts','6')) } : undefined;
-  const agent = new Agent(provider,'edit',system,ctx,manager,bus,ui,false,1000,verification);
+  const agent = new Agent(provider,'build',system,ctx,manager,bus,ui,false,1000,verification);
   let legacyOutcome = 'running';
   const outcome = () => agent.outcome ?? legacyOutcome;
   const budget = () => agent.contextBudget?.() ?? {prompt:agent.contextTokens(),window:chosen.contextWindow};

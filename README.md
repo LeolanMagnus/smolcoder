@@ -39,7 +39,7 @@ Type what you want done and press enter. The agent reads files, edits them and r
 | Key | What it does |
 |---|---|
 | `/` | Opens the command menu |
-| `shift+tab` | Cycles the permission mode: read-only, edit, bypass |
+| `shift+tab` | Cycles the mode: plan, build, auto |
 | `click` | Expands or collapses a tool call or the plan checklist |
 | `esc` | Cancels the running turn, or clears the input |
 | `ctrl+c` twice | Quits |
@@ -51,7 +51,7 @@ The line under the input shows the mode, the model, the reasoning effort, how fu
 | Command | What it does |
 |---|---|
 | `/models` | Switch model, or add models from other machines |
-| `/mode` | Set the permission mode (`ro`, `edit`, `bypass`) |
+| `/mode` | Set the mode (`plan`, `build`, `auto`) |
 | `/effort` | Set reasoning effort (`off`, `low`, `medium`, `high`, `default`) |
 | `/plan` | Show the agent's checklist |
 | `/context` | Show context window usage |
@@ -63,15 +63,15 @@ The line under the input shows the mode, the model, the reasoning effort, how fu
 
 Sessions are saved as you work, under `~/.smolcoder/sessions/`. `/sessions` lists the ones for this folder — pick one to resume, or start, rename or delete a session there. The same saved sessions appear in the web UI, and the ones from the web UI can be resumed in the terminal.
 
-### Permission modes
+### Modes
 
 | Mode | Files | Commands |
 |---|---|---|
-| `ro` | read and search only | none |
-| `edit` (default) | read, write, edit | run freely inside the project folder; anything reaching outside it asks you first |
-| `bypass` | read, write, edit | never asks |
+| `plan` | read and search only | none |
+| `build` (default) | read, write, edit | run freely inside the project folder; anything reaching outside it asks you first |
+| `auto` | read, write, edit | never asks |
 
-File access stops at the project folder. In edit mode, a command that reaches outside it (another folder, your home directory, a global install) asks for approval first and says why. This is a text check on the command, not an operating-system sandbox, so use read-only mode on code you do not trust. Fetching a web page (`web_fetch`) is read-only and available in every mode.
+File access stops at the project folder. In build mode, a command that reaches outside it (another folder, your home directory, a global install) asks for approval first and says why. This is a text check on the command, not an operating-system sandbox, so use plan mode on code you do not trust. Fetching a web page (`web_fetch`) is read-only and available in every mode.
 
 ### Options
 
@@ -80,7 +80,7 @@ smol                            # current folder
 smol path/to/project            # a specific project
 smol --model qwen3              # pick a model by partial name
 smol --effort off               # no thinking: fastest for long tool loops
-smol --mode bypass              # never ask for approval
+smol --mode auto                # never ask for approval
 smol --ctx 16384                # cap the context window
 smol --web                      # browser UI (see below)
 smol -p "fix the failing test"  # headless: run one prompt, print the transcript, exit
@@ -149,7 +149,7 @@ smolcoder sends your code and prompts to the server you choose, and runs the too
 
 Local models are free and private, but they give you less to work with. The context window is small, generation is slower, and long instructions get lost. smolcoder is built around those limits.
 
-- **It stays out of the model's way.** A short system prompt and nine simple tools (five in read-only mode) leave most of the window for your code.
+- **It stays out of the model's way.** A short system prompt and nine simple tools (five in plan mode) leave most of the window for your code.
 - **It watches the real window.** It asks the server how much context is actually loaded, shows a meter, and keeps room for the reply. A model that advertises a 128k window is often loaded with 4k, and smolcoder budgets for the 4k.
 - **It tidies up as it goes, not just before the window fills.** Once a large file is written, its body is dropped from the conversation immediately — the code is on disk and can be re-read. Old file reads and command output are cleared next. Only then does it ask the model for a short handover. Your request and the checklist are never summarized away.
 - **It keeps the plan outside the conversation.** The to-do list and the notes for the current step live in smolcoder itself, so they survive any summary. If a long run has no plan, the agent is reminded once to make one; step text is kept short.

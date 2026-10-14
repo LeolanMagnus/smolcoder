@@ -114,7 +114,7 @@ test("agent: a turn with attachments sends the file text and the images to the p
     const taskManager = new TaskManager(ws);
     managers.push(taskManager);
     const ctx = { workspace: ws, plan: new Plan(), taskManager, filesTouched: new Set(), commandsRun: [] };
-    return new Agent(provider, "ro", "sys", ctx, new ContextManager(8000, 2000), new EventBus(), ui, false, 5);
+    return new Agent(provider, "plan", "sys", ctx, new ContextManager(8000, 2000), new EventBus(), ui, false, 5);
   };
   t.after(() => { for (const m of managers) m.killAll(); rm(dir); });
   const sighted = make(true);
@@ -194,10 +194,10 @@ function fakeFactory(seen) {
       workspace,
       onExit: null,
       taskManager: { killAll() {}, runningSummary: () => [], recentUrls: () => [] },
-      state: () => ({ mode: "edit", model: "fake-model", backend: "ollama", workspace, urls: [], commands: [] }),
+      state: () => ({ mode: "build", model: "fake-model", backend: "ollama", workspace, urls: [], commands: [] }),
       announce() {},
       restore() {},
-      snapshot: () => ({ messages: [], plan: [], filesTouched: [], commandsRun: [], originalRequest: "", currentRequest: "", mode: "edit", effort: null, model: "fake-model", backend: "ollama" }),
+      snapshot: () => ({ messages: [], plan: [], filesTouched: [], commandsRun: [], originalRequest: "", currentRequest: "", mode: "build", effort: null, model: "fake-model", backend: "ollama" }),
       async suggestTitle() { return null; },
       async run() {
         for (;;) {

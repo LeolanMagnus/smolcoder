@@ -19,7 +19,7 @@ mkdir -p "$root/bench/out" "$ws"
 log="$root/bench/out/$label.log"
 start=$(date +%s)
 echo "[bench] start $(date -Iseconds) label=$label model=$model effort=$effort flags=$*" | tee "$log"
-node "$root/dist/index.js" "$ws" -p "$(cat "$prompt")" --mode yolo --effort "$effort" --model "$model" "$@" >> "$log" 2>&1
+node "$root/dist/index.js" "$ws" -p "$(cat "$prompt")" --mode auto --effort "$effort" --model "$model" "$@" >> "$log" 2>&1
 code=$?
 echo "[bench] end $(date -Iseconds) exit=$code wall=$(( $(date +%s) - start ))s" | tee -a "$log"
 grep -E "^\[stats\]" "$log" | tail -1

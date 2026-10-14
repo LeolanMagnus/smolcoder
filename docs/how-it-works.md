@@ -4,7 +4,7 @@ The mechanics behind smolcoder, kept out of the README so the setup guide stays 
 
 ## Built around the next coding step
 
-Each coding request contains a short system prompt, project instructions from `AGENTS.md` when present, the tools allowed by the current mode, and a budgeted working history. Tool selection is deliberately simple: nine tools in edit/bypass mode, five in read-only mode. Tool schemas use flat parameters and example calls; file reads and command results have bounded output.
+Each coding request contains a short system prompt, project instructions from `AGENTS.md` when present, the tools allowed by the current mode, and a budgeted working history. Tool selection is deliberately simple: nine tools in build/auto mode, five in plan mode. Tool schemas use flat parameters and example calls; file reads and command results have bounded output.
 
 ```mermaid
 flowchart LR
@@ -155,7 +155,7 @@ Planning and compaction are established techniques. smolcoder's distinction is t
 
 | Harness | Planning | Context and local-model support |
 |---|---|---|
-| **smolcoder** | One flat `plan` tool, incremental completion, harness-derived next step and checklist state retained through compaction. | Eight coding tools, or four in read-only mode; loaded-window budgets; staged eviction; same-model background handovers with foreground priority. |
+| **smolcoder** | One flat `plan` tool, incremental completion, harness-derived next step and checklist state retained through compaction. | Eight coding tools, or four in plan mode; loaded-window budgets; staged eviction; same-model background handovers with foreground priority. |
 | **Claude Code** | Plan mode for exploring and proposing changes; task tools can track status and dependencies, with availability depending on model/settings. [Architecture](https://code.claude.com/docs/en/how-claude-code-works), [task tools](https://code.claude.com/docs/en/tools-reference#task-tool-availability). | Its documented Claude workflow also clears old tool output before summarizing, and defers MCP tool definitions. These techniques are shared, rather than unique to smolcoder. [Context management](https://code.claude.com/docs/en/how-claude-code-works#the-context-window). |
 | **Codex** | A planning mode plus structured plan updates with step statuses. [Commands](https://learn.chatgpt.com/docs/developer-commands?surface=cli), [plan events](https://learn.chatgpt.com/docs/app-server#turn-events). | Automatic compaction has a configurable token threshold. Codex also supports Ollama and LM Studio through `--oss`; local execution alone is not a smolcoder differentiator. [Configuration](https://learn.chatgpt.com/docs/config-file/config-reference). |
 | **OpenCode** | Separate Build and Plan agents, plus a `todowrite` tool for tracking multi-step work. [Agents](https://opencode.ai/docs/agents/#built-in), [todos](https://opencode.ai/docs/tools/#todowrite). | Supports local providers, automatic compaction, optional old-output pruning and a configurable compaction reserve. [Providers](https://opencode.ai/docs/providers/#ollama), [compaction settings](https://opencode.ai/docs/config/#compaction). |

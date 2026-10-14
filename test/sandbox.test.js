@@ -1,4 +1,4 @@
-// Command containment for edit mode: which commands run without asking, and
+// Command containment for build mode: which commands run without asking, and
 // which reach outside the workspace and go to the y/n prompt.
 const test = require("node:test");
 const assert = require("node:assert/strict");

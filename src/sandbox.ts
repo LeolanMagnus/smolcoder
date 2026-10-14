@@ -2,9 +2,9 @@
 // inside the workspace root — including through symlinks, which is why we
 // realpath the deepest EXISTING ancestor before comparing.
 //
-// Commands (run_command / task) cannot be contained this way. Edit mode scans
+// Commands (run_command / task) cannot be contained this way. Build mode scans
 // the command text instead (commandEscapesWorkspace, below) and asks the user
-// only when something reaches outside; bypass mode never asks.
+// only when something reaches outside; auto mode never asks.
 
 import * as fs from "fs";
 import * as path from "path";
@@ -69,7 +69,7 @@ export function relPath(root: string, abs: string): string {
 }
 
 // ---------------------------------------------------------------------------
-// Command containment (edit mode). A shell command cannot be sandboxed the way
+// Command containment (build mode). A shell command cannot be sandboxed the way
 // a file path can, so this is a best-effort scan of the command text for
 // anything that reaches outside the workspace: absolute paths that resolve
 // elsewhere, `..` climbing past the root, home-directory shortcuts, temp-dir

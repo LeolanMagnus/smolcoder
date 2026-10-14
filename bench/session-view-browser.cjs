@@ -34,7 +34,7 @@ const { PAGE_HTML } = require('../dist/web/page');
     await emit([{ t: 'hub', home: '/workspace', version: 'test', workspaces: [{ path: '/workspace/demo', name: 'demo', sessions: [
       { id: 's1', title: 'Scroll test', live: true, status: 'busy', updatedAt: 2 },
       { id: 's2', title: 'Other session', live: true, status: 'busy', updatedAt: 1 },
-    ] }] }, ...['s1', 's2'].map((sid) => ({ t: 'state', sid, s: { mode: 'edit', model: 'fixture', backend: 'ollama', workspace: '/workspace/demo', commands: [] } })),
+    ] }] }, ...['s1', 's2'].map((sid) => ({ t: 'state', sid, s: { mode: 'build', model: 'fixture', backend: 'ollama', workspace: '/workspace/demo', commands: [] } })),
     ...lines('s1', 100, 'Earlier message'), ...lines('s2', 70, 'Background message')]);
     await settle();
     await bottom();

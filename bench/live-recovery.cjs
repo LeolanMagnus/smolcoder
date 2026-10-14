@@ -56,7 +56,7 @@ const { pickShell } = require('../dist/tools/shell');
   const ctx={workspace,taskManager:manager,plan:new Plan(),filesTouched:new Set(),commandsRun:[]};
   const provider=new OllamaProvider(`http://127.0.0.1:${proxy.address().port}`,model,8192,8192,2048);
   provider.setEffort('low');
-  const agent=new Agent(provider,'edit',buildSystemPrompt({workspace,mode:'edit',shellLabel:pickShell().label}),ctx,new ContextManager(8192,2048),new EventBus(),ui,false,20);
+  const agent=new Agent(provider,'build',buildSystemPrompt({workspace,mode:'build',shellLabel:pickShell().label}),ctx,new ContextManager(8192,2048),new EventBus(),ui,false,20);
   try {
     await agent.runTurn('Use write_file to create recovery.txt with exactly recovered, then finish with a short confirmation.');
     assert.equal(agent.outcome,'completed');

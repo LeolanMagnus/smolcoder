@@ -104,7 +104,7 @@ test("addresses outside a home or office network are recognized", () => {
 
 test("remembering the model never forgets the hosts, and old configs still load", () => {
   saveConfig({ lastModel: "a", hosts: [{ address: "192.168.1.50", name: "Attic" }] });
-  updateConfig({ lastModel: "b", lastModelUrl: "http://192.168.1.50:11434", lastMode: "edit", effort: null });
+  updateConfig({ lastModel: "b", lastModelUrl: "http://192.168.1.50:11434", lastMode: "build", effort: null });
   assert.deepEqual(loadConfig().hosts, [{ address: "192.168.1.50", name: "Attic" }]);
   assert.equal(loadConfig().lastModelUrl, "http://192.168.1.50:11434");
 

@@ -18,6 +18,7 @@ import * as path from "path";
 import { DATA_DIR, loadConfig } from "../config";
 import { noBackendsMessage, prepareModel, Session, SessionPrefs, SessionSnapshot, setupWithoutLocalModels } from "../session";
 import { tryFetchJson } from "../util";
+import { normalizeMode } from "../tools/index";
 import { Attachment, classifyUpload, extOf, MAX_UPLOAD_BYTES, mimeForExt, safeName } from "../attachments";
 import { Event, SessionChannel, uploadUrl } from "./channel";
 import { PAGE_HTML } from "./page";
@@ -453,9 +454,10 @@ export class WebHub {
     this.changed();
     let prefs: SessionPrefs = this.opts.prefs;
     if (restore) {
-      // A saved bypass mode is not inherited silently, same as the config:
-      // the user re-enables it per session.
-      const mode = restore.mode === "bypass" ? "edit" : restore.mode ?? prefs.mode;
+      // A saved auto (bypass) mode is not inherited silently, same as the
+      // config: the user re-enables it per session.
+      const savedMode = normalizeMode(restore.mode, prefs.mode ?? "build");
+      const mode = savedMode === "auto" ? "build" : savedMode;
       prefs = { ...prefs, mode, backend: restore.backend, model: restore.model ?? prefs.model, baseUrl: restore.baseUrl, effort: restore.effort !== undefined ? restore.effort : prefs.effort };
     }
     try {
@@ -474,7 +476,7 @@ export class WebHub {
       session.announce();
       if (restore) {
         live.channel.status(
-          `· session resumed${restore.mode === "bypass" ? " in edit mode (bypass is not restored)" : ""} — earlier command approvals are not remembered`
+          `· session resumed${normalizeMode(restore.mode, "build") === "auto" ? " in build mode (auto is not restored)" : ""} — earlier command approvals are not remembered`
         );
       }
       this.log(`  ● ${live.id} · ${tilde(live.workspace)} · ${session.chosen.id}`);

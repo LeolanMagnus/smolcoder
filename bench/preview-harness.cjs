@@ -8,7 +8,7 @@ async function openPreview(page, url, dataDir) {
   const factory = async (ui, workspace) => ({
     chosen: { id: 'browser-fixture', backend: 'ollama' }, workspace,
     taskManager: { killAll() {}, runningSummary: () => [], recentUrls: () => [url] },
-    state: () => ({ mode: 'edit', model: 'browser-fixture', backend: 'ollama', workspace, urls: [url], commands: [] }),
+    state: () => ({ mode: 'build', model: 'browser-fixture', backend: 'ollama', workspace, urls: [url], commands: [] }),
     announce() {}, restore() {}, snapshot: () => ({ messages: [], plan: [] }),
     async run() { while (await ui.readInput() !== '/exit') {} },
   });

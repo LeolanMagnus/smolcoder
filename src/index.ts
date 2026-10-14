@@ -68,15 +68,16 @@ function parseArgs(argv: string[]): CliArgs {
     else if (a === "--version" || a === "-v") args.version = true;
     else if (a === "--mode" || a === "-m") {
       const v = argv[++i];
-      if (v === "ro" || v === "read-only" || v === "readonly") args.mode = "ro";
-      else if (v === "edit" || v === "e" || v === "write" || v === "w") args.mode = "edit";
-      else if (v === "bypass" || v === "bypass-permissions" || v === "b" || v === "yolo" || v === "y")
-        args.mode = "bypass";
+      const key = (v ?? "").toLowerCase();
+      if (key === "plan" || key === "ro" || key === "read-only" || key === "readonly") args.mode = "plan";
+      else if (key === "build" || key === "edit" || key === "e" || key === "write" || key === "w") args.mode = "build";
+      else if (key === "auto" || key === "bypass" || key === "bypass-permissions" || key === "b" || key === "yolo" || key === "y")
+        args.mode = "auto";
       else {
-        console.error(`Unknown mode "${v}". Use ro, edit, or bypass.`);
+        console.error(`Unknown mode "${v}". Use plan, build, or auto.`);
         process.exit(1);
       }
-    } else if (a === "--bypass" || a === "--bypass-permissions" || a === "--yolo") args.mode = "bypass";
+    } else if (a === "--bypass" || a === "--bypass-permissions" || a === "--yolo") args.mode = "auto";
     else if (a === "--model") args.model = argv[++i];
     else if (a === "--ctx") {
       args.ctx = Number(argv[++i]);
@@ -125,9 +126,10 @@ ${c.bold("Usage:")}
   smol [workspace] [options]
 
 ${c.bold("Options:")}
-  -m, --mode <ro|edit|bypass>  ro: read files only. edit: read/write files and run
-                               commands inside the workspace; anything reaching
-                               outside it asks y/n. bypass: no approvals at all.
+  -m, --mode <plan|build|auto> plan: read and search files only. build: read/write
+                               files and run commands inside the workspace;
+                               anything reaching outside it asks y/n. auto: no
+                               approvals at all.
   --model <name>               pick a model by (partial) name
   --ctx <tokens>               force a context window (Ollama: sends num_ctx)
   --verify <command>           headless acceptance gate; automatically repair failures
@@ -142,7 +144,7 @@ ${c.bold("Options:")}
   -v, --version                version
 
 ${c.bold("Keys:")}
-  shift+tab   cycle mode (read-only → edit → bypass permissions)
+  shift+tab   cycle mode (plan → build → auto)
   /           slash commands (autocomplete menu)
   click       expand/collapse a tool call or the plan checklist
   esc         cancel a running turn · clear the input
@@ -218,7 +220,7 @@ async function runHeadless(args: CliArgs): Promise<void> {
     ui.close();
     process.exit(1);
   }
-  const mode = args.mode ?? cfg.lastMode ?? "edit";
+  const mode = args.mode ?? cfg.lastMode ?? "build";
 
   const shell = pickShell();
   const provider = makeProvider(chosen);

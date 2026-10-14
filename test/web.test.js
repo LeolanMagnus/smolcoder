@@ -121,9 +121,9 @@ test("channel: requestExit hands the loop /exit silently, now and on later reads
 
 test("channel: the state event carries the busy label so a reconnecting page restores its spinner", () => {
   const { ch } = makeChannel();
-  ch.getState = () => ({ mode: "edit" });
+  ch.getState = () => ({ mode: "build" });
   ch.startSpinner("thinking");
-  assert.deepEqual(ch.stateEvent().s, { mode: "edit", busy: "thinking", title: "" });
+  assert.deepEqual(ch.stateEvent().s, { mode: "build", busy: "thinking", title: "" });
   ch.stopSpinner();
   assert.equal(ch.stateEvent().s.busy, null);
 });
@@ -231,10 +231,10 @@ function fakeFactory(log) {
       onExit: null,
       restored: null,
       taskManager: { killAll() {}, runningSummary: () => [], recentUrls: () => ["http://localhost:5173"] },
-      state: () => ({ mode: prefs.mode || "edit", model: "fake-model", backend: "ollama", workspace, urls: ["http://localhost:5173"], commands: [] }),
+      state: () => ({ mode: prefs.mode || "build", model: "fake-model", backend: "ollama", workspace, urls: ["http://localhost:5173"], commands: [] }),
       announce() { ui.status("· fake session ready"); },
       restore(s) { session.restored = s; },
-      snapshot: () => ({ messages: [{ role: "user", content: "x" }], plan: [], filesTouched: [], commandsRun: [], originalRequest: "x", currentRequest: "x", mode: "edit", effort: null, model: "fake-model", backend: "ollama" }),
+      snapshot: () => ({ messages: [{ role: "user", content: "x" }], plan: [], filesTouched: [], commandsRun: [], originalRequest: "x", currentRequest: "x", mode: "build", effort: null, model: "fake-model", backend: "ollama" }),
       // The "model" takes a moment to name the session, like a real one.
       async suggestTitle() { await sleep(300); return "Hello Session"; },
       async run() {

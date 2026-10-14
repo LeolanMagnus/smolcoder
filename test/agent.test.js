@@ -38,7 +38,7 @@ function scriptedProvider(replies) {
   };
 }
 
-function makeAgent(provider, ui, mode = "bypass", interactive = false) {
+function makeAgent(provider, ui, mode = "auto", interactive = false) {
   const ws = fs.mkdtempSync(path.join(os.tmpdir(), "tc-agent-"));
   const toolCtx = { workspace: ws, taskManager: new TaskManager(ws), plan: new Plan(), filesTouched: new Set(), commandsRun: [] };
   return new Agent(provider, mode, "sys", toolCtx, new ContextManager(8000, 2000), new EventBus(), ui, interactive, 20);
@@ -188,7 +188,7 @@ test("the create-plan reminder is not repeated across the turn", async () => {
   assert.equal(total, 1, "exactly one reminder in the transcript");
 });
 
-test("edit mode: an in-workspace command runs without asking", async () => {
+test("build mode: an in-workspace command runs without asking", async () => {
   const provider = scriptedProvider([
     { content: "", toolCalls: [{ id: "c1", name: "run_command", args: { command: "echo hello-from-tree" } }] },
     { content: "done", toolCalls: [] },
@@ -196,14 +196,14 @@ test("edit mode: an in-workspace command runs without asking", async () => {
   const ui = fakeUi();
   let asked = 0;
   ui.confirmCommand = async () => { asked++; return "no"; };
-  const agent = makeAgent(provider, ui, "edit", true);
+  const agent = makeAgent(provider, ui, "build", true);
   await agent.runTurn("go");
   assert.equal(asked, 0);
   const toolMsg = provider.seen[1].find((m) => m.role === "tool");
   assert.match(toolMsg.content, /hello-from-tree/);
 });
 
-test("edit mode: a command reaching outside the workspace asks, with the reason", async () => {
+test("build mode: a command reaching outside the workspace asks, with the reason", async () => {
   const provider = scriptedProvider([
     { content: "", toolCalls: [{ id: "c1", name: "run_command", args: { command: "node /tmp/probe.mjs && node /tmp/other.mjs" } }] },
     { content: "done", toolCalls: [] },
@@ -211,7 +211,7 @@ test("edit mode: a command reaching outside the workspace asks, with the reason"
   const ui = fakeUi();
   const asks = [];
   ui.confirmCommand = async (command, reason) => { asks.push({ command, reason }); return "no"; };
-  const agent = makeAgent(provider, ui, "edit", true);
+  const agent = makeAgent(provider, ui, "build", true);
   await agent.runTurn("go");
   assert.equal(asks.length, 1);
   assert.match(asks[0].reason, /outside the workspace \(\/tmp\/probe\.mjs\)/);
@@ -219,28 +219,28 @@ test("edit mode: a command reaching outside the workspace asks, with the reason"
   assert.match(toolMsg.content, /declined/);
 });
 
-test("edit mode, headless: an outside command is refused with coaching instead of hanging", async () => {
+test("build mode, headless: an outside command is refused with coaching instead of hanging", async () => {
   const provider = scriptedProvider([
     { content: "", toolCalls: [{ id: "c1", name: "run_command", args: { command: "cat ~/.npmrc" } }] },
     { content: "done", toolCalls: [] },
   ]);
   const ui = fakeUi();
   ui.confirmCommand = async () => { throw new Error("must not prompt when non-interactive"); };
-  const agent = makeAgent(provider, ui, "edit", false);
+  const agent = makeAgent(provider, ui, "build", false);
   await agent.runTurn("go");
   const toolMsg = provider.seen[1].find((m) => m.role === "tool");
   assert.match(toolMsg.content, /^Error: this command uses the home directory/);
-  assert.match(toolMsg.content, /--mode bypass/);
+  assert.match(toolMsg.content, /--mode auto/);
 });
 
-test("bypass mode never asks", async () => {
+test("auto mode never asks", async () => {
   const provider = scriptedProvider([
     { content: "", toolCalls: [{ id: "c1", name: "run_command", args: { command: "echo ~/nothing-is-read" } }] },
     { content: "done", toolCalls: [] },
   ]);
   const ui = fakeUi();
-  ui.confirmCommand = async () => { throw new Error("bypass must not prompt"); };
-  const agent = makeAgent(provider, ui, "bypass", true);
+  ui.confirmCommand = async () => { throw new Error("auto must not prompt"); };
+  const agent = makeAgent(provider, ui, "auto", true);
   await agent.runTurn("go");
   const toolMsg = provider.seen[1].find((m) => m.role === "tool");
   assert.match(toolMsg.content, /nothing-is-read/);

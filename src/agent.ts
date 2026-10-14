@@ -182,7 +182,7 @@ export class Agent {
   }
 
   private discoverVerification(wroteThisTurn: boolean): void {
-    if ((!this.verification || this.verification.source === "project") && wroteThisTurn && this.mode !== "ro") {
+    if ((!this.verification || this.verification.source === "project") && wroteThisTurn && this.mode !== "plan") {
       const command = projectVerification(this.toolCtx.workspace);
       if (command) {
         // Include scripts added during repairs, while retaining checks already
@@ -194,7 +194,7 @@ export class Agent {
   }
 
   private async verify(signal: AbortSignal): Promise<boolean> {
-    if (this.mode === "ro") throw new Error("Acceptance commands are unavailable in read-only mode.");
+    if (this.mode === "plan") throw new Error("Acceptance commands are unavailable in plan mode.");
     const check = this.verification!;
     const attempts = (this.verificationResult?.attempts ?? 0) + 1;
     if (attempts > (check.maxAttempts ?? 6)) throw new Error("Acceptance attempt limit reached before the agent finished. The task is incomplete.");
@@ -441,7 +441,7 @@ export class Agent {
           } else if (!this.tools.some((t) => t.name === call.name)) {
             // HARD mode enforcement. The schemas sent to the model are only
             // advisory — a hallucinated or injected write_file/run_command in
-            // read-only mode must be rejected here, at execution time.
+            // plan mode must be rejected here, at execution time.
             output = `Error: the tool "${call.name}" is not available in ${MODE_LABELS[this.mode]} mode. Available tools: ${this.tools.map((t) => t.name).join(", ")}.`;
           } else {
             this.toolCtx.resultCharLimit = this.ctxMgr.toolResultCharLimit();
@@ -473,7 +473,7 @@ export class Agent {
               sincePlanUpdate = 0;
               const cur = plan.steps[plan.currentIndex];
               output += `\n[Reminder: the plan still shows step ${plan.currentIndex + 1} "${cur.text}" as current. If you have finished steps, mark each with plan {"action": "done"} now.]`;
-            } else if (!plan.exists && this.mode !== "ro" && !this.planCreateNudged && toolCallsThisTurn >= 6) {
+            } else if (!plan.exists && this.mode !== "plan" && !this.planCreateNudged && toolCallsThisTurn >= 6) {
               // The model is clearly on a multi-step task but never created a
               // plan. One reminder only; any plan call disarms it for the turn.
               this.planCreateNudged = true;
@@ -490,7 +490,7 @@ export class Agent {
           let readRepeats = 0;
           let readKey = "";
           if (["read_file", "search", "list_files", "web_fetch"].includes(call.name) && !output.startsWith("Error")) {
-            if (++readsSinceAction % 12 === 0 && this.mode !== "ro") output += "\n[Investigation checkpoint: record the exact APIs, unresolved error and next small edit with plan checkpoint. Then make and verify that edit before inspecting more modules.]";
+            if (++readsSinceAction % 12 === 0 && this.mode !== "plan") output += "\n[Investigation checkpoint: record the exact APIs, unresolved error and next small edit with plan checkpoint. Then make and verify that edit before inspecting more modules.]";
             // Match both the request and file/output contents: rereading an
             // edited file or a different line range is legitimate progress.
             readKey = createHash("sha256").update(call.name + JSON.stringify(call.args) + (observedOutput ?? output)).digest("hex");
@@ -535,7 +535,7 @@ export class Agent {
           // Preserve this counter across compaction; only an edit or check
           // resets it. Read-only investigations never execute commands.
           const needsEvidence = readRepeats >= 5 || repeats >= 6 || failedCalls >= 6 ||
-            (wroteThisTurn && readsSinceAction >= 24 && this.mode !== "ro");
+            (wroteThisTurn && readsSinceAction >= 24 && this.mode !== "plan");
           if (needsEvidence) this.discoverVerification(wroteThisTurn);
           if (this.verification && needsEvidence) {
             this.repairTranscript("[Not executed: the harness switched to executable checks after repeated attempts.]");
@@ -577,7 +577,7 @@ export class Agent {
         // A model can cycle through different reads and small API edits forever
         // without triggering an identical-call guard. Periodic executable
         // feedback grounds that investigation before a proposed completion.
-        if (wroteThisTurn && this.mode !== "ro" && toolCallsThisTurn - lastProgressCheck >= 24) {
+        if (wroteThisTurn && this.mode !== "plan" && toolCallsThisTurn - lastProgressCheck >= 24) {
           lastProgressCheck = toolCallsThisTurn;
           this.discoverVerification(wroteThisTurn);
           if (this.verification && this.verificationResult) {
@@ -679,15 +679,15 @@ export class Agent {
     signal?: AbortSignal
   ): Promise<string> {
     const command = commandOf(name, args);
-    // Gate everywhere except bypass (defense-in-depth: in ro mode exec tools are
-    // already rejected before this point by the tool-existence check). Edit
-    // mode runs commands that stay inside the workspace without asking and
-    // only prompts for ones that reach outside it.
-    if (command !== null && this.mode !== "bypass") {
+    // Gate everywhere except auto (defense-in-depth: in plan mode exec tools
+    // are already rejected before this point by the tool-existence check).
+    // Build mode runs commands that stay inside the workspace without asking
+    // and only prompts for ones that reach outside it.
+    if (command !== null && this.mode !== "auto") {
       const reason = commandEscapesWorkspace(command, this.toolCtx.workspace);
       if (reason !== null && !isAutoApproved(command, this.alwaysAllowed)) {
         if (!this.interactive) {
-          return `Error: this command ${reason}, which needs user approval, and this session is non-interactive. Keep every path inside the workspace (relative paths, a scratch folder in the workspace instead of /tmp), or the user can rerun smol with --mode bypass, or run this themselves: ${command}`;
+          return `Error: this command ${reason}, which needs user approval, and this session is non-interactive. Keep every path inside the workspace (relative paths, a scratch folder in the workspace instead of /tmp), or the user can rerun smol with --mode auto, or run this themselves: ${command}`;
         }
         const answer = await this.ui.confirmCommand(command, reason);
         if (answer === "no") {

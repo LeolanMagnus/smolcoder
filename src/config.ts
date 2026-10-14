@@ -6,7 +6,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { Effort } from "./providers/types";
-import { Mode } from "./tools/index";
+import { Mode, normalizeMode } from "./tools/index";
 
 // SMOLCODER_CONFIG points tests at a scratch file so they never touch the
 // real one.
@@ -37,13 +37,16 @@ export interface Config {
 export function loadConfig(): Config {
   try {
     const cfg = JSON.parse(fs.readFileSync(CONFIG_PATH, "utf8"));
-    // Never let bypass be inherited implicitly from a past session — a single
-    // shift+tab into it would otherwise silently persist unattended, unchecked
-    // command execution into every later run, including headless -p in CI.
-    // Requires an explicit flag (-m bypass / --bypass) each time. Old configs
-    // saved "write"/"yolo" under the previous mode names.
-    if (cfg.lastMode === "write") cfg.lastMode = "edit";
-    if (cfg.lastMode === "yolo" || cfg.lastMode === "bypass") cfg.lastMode = "edit";
+    // Never let the auto (bypass) mode be inherited implicitly from a past
+    // session — a single shift+tab into it would otherwise silently persist
+    // unattended, unchecked command execution into every later run, including
+    // headless -p in CI. It requires an explicit flag (-m auto / --bypass /
+    // --yolo) each time. Old configs saved "write"/"yolo"/"bypass"/"ro" under
+    // the previous mode names.
+    if (typeof cfg.lastMode === "string") {
+      const m = normalizeMode(cfg.lastMode, "build");
+      cfg.lastMode = m === "auto" ? "build" : m;
+    }
     cfg.hosts = Array.isArray(cfg.hosts)
       ? cfg.hosts
           .filter((h: any) => h && typeof h.address === "string" && h.address.trim())
