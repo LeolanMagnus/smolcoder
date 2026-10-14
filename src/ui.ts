@@ -5,6 +5,7 @@
 import * as readline from "readline";
 import { UserInput } from "./attachments";
 import { Plan } from "./plan";
+import { Msg } from "./providers/types";
 import { DiffLine, editDiff } from "./tools/diff";
 import { c, fmtDuration } from "./util";
 
@@ -67,6 +68,8 @@ export interface SessionUI extends AgentUI {
   setToolDetails?(expanded: boolean): void;
   /** Show or hide reasoning blocks (opencode-style /thinking). */
   setThinking?(visible: boolean): void;
+  /** Replace the visible transcript with a resumed conversation (terminal TUI). */
+  replayConversation?(messages: Msg[], title?: string): void;
 }
 
 /** Shared checklist renderer: ✔ done (dim) · ▶ current (cyan) · ○ pending. */

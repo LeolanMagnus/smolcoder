@@ -5,13 +5,14 @@
 // zero deps.
 
 import { Plan } from "../plan";
+import { Msg } from "../providers/types";
 import { ThemeMode } from "../theme";
 import { diffCounts, editDiff } from "../tools/diff";
 import { SelectOption, SessionUI, SlashCommand, summarizeArgs } from "../ui";
 import { c, fmtDuration } from "../util";
 import { LineEditor, layoutBuffer } from "./editor";
 import { Key, KeyDecoder, Mouse } from "./keys";
-import { Block, paintDiff, Transcript, truncateVisible, visLen } from "./render";
+import { Block, paintDiff, Transcript, ToolInfo, truncateVisible, visLen } from "./render";
 
 type State = "hidden" | "idle" | "select" | "confirm" | "prompt";
 
@@ -918,6 +919,65 @@ export class Tui implements SessionUI {
     this.currentThought = null;
     this.thoughtRaw = "";
     this.transcript.add({ kind: "line", text: "[Interrupted response discarded]", tone: "status" });
+    this.render();
+  }
+
+  /** Replace the whole transcript with a resumed conversation (or an empty one
+   * for a fresh session). Agent messages are replayed as blocks; tool results
+   * are matched to their call by id. */
+  replayConversation(messages: Msg[], title = ""): void {
+    this.stopSpinner();
+    this.finishThought();
+    this.stopProgress();
+    this.transcript.clear();
+    this.currentContent = null;
+    this.currentPlan = null;
+    this.pendingTool = null;
+    this.pendingDiff = null;
+    this.currentThought = null;
+    this.thoughtRaw = "";
+    this.scrollOffset = 0;
+    this.inputQueue = [];
+    this.queueEd.clear();
+
+    if (this.banner.length) this.transcript.add({ kind: "line", text: this.banner.join("\n"), tone: "status" });
+    this.transcript.add({
+      kind: "line",
+      text: title ? `${c.dim("· resumed session")} ${c.bold(title)}` : c.dim("· new session"),
+      tone: "status",
+    });
+
+    const toolBlocks = new Map<string, number>();
+    for (const m of messages) {
+      if (m.role === "system" || m.compactNote || m.historyNote) continue;
+      if (m.role === "user") {
+        this.transcript.add({ kind: "user", text: m.content });
+      } else if (m.role === "assistant") {
+        if (m.thinking) this.transcript.add({ kind: "thought", raw: m.thinking, expanded: false, seconds: 0 });
+        if (m.content && m.content.trim()) this.transcript.add({ kind: "content", raw: m.content });
+        for (const tc of m.toolCalls ?? []) {
+          const idx = this.transcript.add({
+            kind: "tool",
+            name: tc.name,
+            argsSummary: summarizeArgs(tc.name, tc.args ?? {}),
+            expanded: this.toolDetails,
+          });
+          if (tc.id) toolBlocks.set(tc.id, idx);
+        }
+      } else if (m.role === "tool") {
+        const lines = String(m.content ?? "").split("\n");
+        const first = lines[0] ?? "";
+        const err = first.startsWith("Error");
+        const info: ToolInfo = { summary: first.slice(0, 120), took: "", err };
+        const idx = m.toolCallId !== undefined ? toolBlocks.get(m.toolCallId) : undefined;
+        const b = idx !== undefined ? this.transcript.blockAt(idx) : undefined;
+        if (b && b.kind === "tool") {
+          this.transcript.update(idx!, { ...b, result: info });
+        } else {
+          this.transcript.add({ kind: "line", text: first, tone: err ? "error" : "status" });
+        }
+      }
+    }
     this.render();
   }
 

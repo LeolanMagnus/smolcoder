@@ -57,8 +57,11 @@ The line under the input shows the mode, the model, the reasoning effort, how fu
 | `/context` | Show context window usage |
 | `/compact` | Compact the conversation now |
 | `/tasks`, `/logs <id>`, `/stop <id>` | Inspect and stop background tasks such as dev servers |
-| `/clear` | Start a fresh conversation |
+| `/sessions` | Switch between saved sessions, or start/rename/delete one |
+| `/clear` | Start a fresh session |
 | `/help`, `/exit` | Help and quit |
+
+Sessions are saved as you work, under `~/.smolcoder/sessions/`. `/sessions` lists the ones for this folder — pick one to resume, or start, rename or delete a session there. The same saved sessions appear in the web UI, and the ones from the web UI can be resumed in the terminal.
 
 ### Permission modes
 

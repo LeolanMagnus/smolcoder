@@ -3,6 +3,7 @@
 // terminal TUI and the web hub (many sessions side by side, one per browser
 // sidebar entry) run exactly the same loop.
 
+import { randomBytes } from "crypto";
 import * as os from "os";
 import { Agent } from "./agent";
 import { Config, loadConfig, updateConfig } from "./config";
@@ -15,10 +16,11 @@ import { buildSystemPrompt, loadAgentsMd } from "./prompt";
 import { LmStudioProvider } from "./providers/lmstudio";
 import { OllamaProvider } from "./providers/ollama";
 import { Effort, Msg, Provider } from "./providers/types";
+import { SessionBody, SessionMeta, SessionStore, workspaceKey } from "./store";
 import { Mode, MODE_LABELS, ToolContext } from "./tools/index";
 import { pickShell } from "./tools/shell";
 import { TaskManager } from "./tools/tasks";
-import { renderPlan, SelectOption, SessionUI, SlashCommand } from "./ui";
+import { renderPlan, SelectOption, SessionUI, SlashCommand, summarizeArgs } from "./ui";
 import { c, truncateEnd } from "./util";
 
 /** Per-session preferences from the command line. `effort: null` means an
@@ -45,7 +47,8 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "tasks", desc: "List background tasks" },
   { name: "logs", desc: "Show task output — /logs t1" },
   { name: "stop", desc: "Stop a background task — /stop t1" },
-  { name: "clear", desc: "Reset the conversation" },
+  { name: "sessions", desc: "Switch or manage saved sessions" },
+  { name: "clear", desc: "Start a fresh session" },
   { name: "help", desc: "Show help" },
   { name: "exit", desc: "Quit smolcoder (web: close this session)" },
 ];
@@ -273,6 +276,49 @@ export function cleanTitle(raw: string): string | null {
   return t || null;
 }
 
+// ---- session ids and transcript replay -------------------------------------
+
+/** A short hex id, the same shape the web hub mints for its sessions. */
+export function newSessionId(): string {
+  return randomBytes(4).toString("hex");
+}
+
+/** Convert agent messages into the web page's replay events, so a session
+ * written from the terminal TUI renders its transcript if opened in --web.
+ * Exported for tests. */
+export function eventsFromMessages(messages: Msg[]): Record<string, any>[] {
+  const out: Record<string, any>[] = [];
+  for (const m of messages) {
+    if (m.compactNote || m.historyNote) continue;
+    if (m.role === "user") {
+      out.push({ t: "user", s: m.content });
+    } else if (m.role === "assistant") {
+      if (m.thinking) out.push({ t: "thinking", s: m.thinking });
+      if (m.content && m.content.trim()) out.push({ t: "token", s: m.content });
+      for (const tc of m.toolCalls ?? []) out.push({ t: "tool", name: tc.name, summary: summarizeArgs(tc.name, tc.args ?? {}) });
+    } else if (m.role === "tool") {
+      const lines = String(m.content ?? "").split("\n");
+      const first = lines[0] ?? "";
+      out.push({ t: "result", line: first.slice(0, 160), err: first.startsWith("Error"), extra: lines.length > 1 ? lines.length - 1 : 0, body: m.content });
+    }
+  }
+  return out;
+}
+
+/** A compact "2h ago" / "yesterday" style age for the session picker. */
+export function relativeTime(ts: number): string {
+  const d = Date.now() - ts;
+  if (!ts || d < 30_000) return "just now";
+  const m = Math.floor(d / 60_000);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const days = Math.floor(h / 24);
+  if (days === 1) return "yesterday";
+  if (days < 30) return `${days}d ago`;
+  return new Date(ts).toLocaleDateString();
+}
+
 // ---- the session -----------------------------------------------------------
 
 /** Everything needed to bring a session back after a restart. */
@@ -298,6 +344,9 @@ export interface SessionOptions {
   cfg: Config;
   /** Text printed by /help. */
   help: string;
+  /** When set, the session saves itself to this store and gains /sessions.
+   * The web hub leaves it undefined and owns persistence itself. */
+  store?: SessionStore;
 }
 
 export class Session {
@@ -319,6 +368,14 @@ export class Session {
   private readonly agentsMd: string | null;
   private readonly prefs: SessionPrefs;
   private readonly help: string;
+  private readonly store?: SessionStore;
+  /** On-disk identity of this session, minted on the first save. */
+  private id = "";
+  private title = "";
+  private createdAt = 0;
+  /** The user renamed it by hand: the model's title must never replace it. */
+  private titleByUser = false;
+  private titleTries = 0;
   private ended = false;
   private toolDetails = false;
   private showThinking = true;
@@ -332,6 +389,7 @@ export class Session {
     this.chosen = chosen;
     this.prefs = prefs;
     this.help = opts.help;
+    this.store = opts.store;
     const mode0 = prefs.mode ?? cfg.lastMode ?? "edit";
     this.effort = prefs.effort !== undefined ? prefs.effort : (cfg.effort ?? null);
 
@@ -358,6 +416,7 @@ export class Session {
       const next = MODE_ORDER[(MODE_ORDER.indexOf(this.agent.mode) + 1) % MODE_ORDER.length];
       this.agent.setMode(next, this.sysPrompt(next));
       this.persist();
+      this.saveSession();
     };
     ui.onCancel = () => this.agent.cancel();
     ui.onExit = () => void this.shutdown();
@@ -372,6 +431,80 @@ export class Session {
 
   private persist(): void {
     updateConfig({ lastModel: this.chosen.id, lastModelUrl: this.chosen.baseUrl, lastMode: this.agent.mode, effort: this.effort });
+  }
+
+  // ---- session persistence (terminal TUI; the web hub saves its own way) ----
+
+  /** True once the user has actually said something worth keeping. */
+  private hasContent(): boolean {
+    return this.agent.messages.some((m) => m.role === "user" && !m.compactNote && !m.historyNote);
+  }
+
+  private fallbackTitle(): string {
+    const first = this.agent.messages.find((m) => m.role === "user" && !m.compactNote && !m.historyNote);
+    return (first?.content ?? "").replace(/\s+/g, " ").trim().slice(0, 60) || "untitled session";
+  }
+
+  /** Write the current transcript to the shared store. A no-op in the web hub
+   * (which owns persistence) and for a session with nothing said yet. Written
+   * synchronously: the terminal has one session, so a stale async write racing
+   * a switch is not worth the risk. */
+  private saveSession(): void {
+    if (!this.store || !this.hasContent()) return;
+    if (!this.id) this.id = newSessionId();
+    if (!this.title) this.title = this.fallbackTitle();
+    if (!this.createdAt) this.createdAt = Date.now();
+    const meta: SessionMeta = {
+      id: this.id,
+      workspace: this.workspace,
+      title: this.title,
+      createdAt: this.createdAt,
+      updatedAt: Date.now(),
+      model: this.chosen.id,
+      backend: this.chosen.backend,
+    };
+    const body: SessionBody = { snapshot: this.snapshot(), events: eventsFromMessages(this.agent.messages) };
+    try {
+      this.store.saveMeta(meta);
+      this.store.saveBodySync(this.id, body);
+    } catch {
+      /* best effort */
+    }
+  }
+
+  /** After a completed turn: save, then let the model name the session once. */
+  private afterTurn(): void {
+    if (!this.store) return;
+    if (!this.title) this.title = this.fallbackTitle();
+    this.saveSession();
+    void this.maybeAutoTitle();
+  }
+
+  private async maybeAutoTitle(): Promise<void> {
+    if (!this.store || this.titleByUser || this.titleTries >= 2) return;
+    this.titleTries++;
+    let title: string | null = null;
+    try {
+      title = await this.suggestTitle();
+    } catch {
+      title = null;
+    }
+    if (!title || this.titleByUser) return;
+    this.title = title;
+    this.saveSession();
+  }
+
+  /** Reset everything for a brand-new session (a fresh id, no transcript). */
+  private newConversation(): void {
+    this.agent.resetTranscript();
+    this.toolCtx.plan.reset();
+    this.toolCtx.filesTouched.clear();
+    this.toolCtx.commandsRun.length = 0;
+    this.id = newSessionId();
+    this.createdAt = Date.now();
+    this.title = "";
+    this.titleByUser = false;
+    this.titleTries = 0;
   }
 
   /** The TUI's status row: mode · model · effort · context · plan · tasks. */
@@ -451,6 +584,10 @@ export class Session {
   /** Bring a saved transcript back (the system message is rebuilt for the
    * current mode/workspace; approvals are deliberately not restored). */
   restore(s: SessionSnapshot): void {
+    // Clear leftover outcome/error/plan from whatever ran before this session
+    // was loaded into the same agent.
+    this.agent.resetTranscript();
+    this.toolCtx.plan.reset();
     this.agent.restoreTranscript(s.messages ?? [], s.originalRequest ?? "", s.currentRequest ?? "");
     this.toolCtx.plan.steps = (s.plan ?? []).map((p) => ({ text: String(p.text), done: !!p.done,
       ...(typeof p.note === "string" ? { note: p.note.slice(0, 1000) } : {}) }));
@@ -526,9 +663,20 @@ export class Session {
             );
             break;
           case "clear":
-            agent.resetTranscript();
-            toolCtx.plan.reset();
-            ui.status("· conversation cleared");
+            if (this.store) {
+              this.saveSession();
+              this.newConversation();
+              ui.replayConversation?.([], "");
+              ui.status("· started a fresh session");
+            } else {
+              agent.resetTranscript();
+              toolCtx.plan.reset();
+              ui.status("· conversation cleared");
+            }
+            break;
+          case "sessions":
+            if (this.store) await this.manageSessions();
+            else ui.warn("· use the session list in the sidebar to switch sessions");
             break;
           default:
             ui.warn(`Unknown command /${cmd} — try /help`);
@@ -539,6 +687,7 @@ export class Session {
 
       try {
         await agent.runTurn(input, attachments);
+        this.afterTurn();
         this.onTurnDone?.();
       } catch (err: any) {
         ui.error(`\n${err?.message ?? err}`);
@@ -557,6 +706,7 @@ export class Session {
     if (this.ended) return;
     this.ended = true;
     this.agent.cancel();
+    this.saveSession();
     try {
       await this.bus.emit("session_end");
     } catch {
@@ -596,16 +746,23 @@ export class Session {
     } finally {
       ui.stopSpinner();
     }
-    this.chosen = next;
-    const p = makeProvider(next);
-    p.setEffort(this.effort);
-    agent.setProvider(p);
-    this.ctxMgr.setWindow(next.contextWindow, p.maxOutputTokens);
+    this.applyModel(next);
     this.persist();
+    this.saveSession();
     ui.println(sessionLine(next, agent.mode));
     if (next.note) ui.warn(`  ${next.note}`);
     const advice = effortAdvice(next, this.effort);
     if (advice) ui.warn(`  ${advice}`);
+  }
+
+  /** Swap in a detected model: a fresh provider plus the matching context
+   * window. Shared by /models and by resuming a session on another model. */
+  private applyModel(next: DetectedModel): void {
+    this.chosen = next;
+    const p = makeProvider(next);
+    p.setEffort(this.effort);
+    this.agent.setProvider(p);
+    this.ctxMgr.setWindow(next.contextWindow, p.maxOutputTokens);
   }
 
   private async setMode(arg?: string): Promise<void> {
@@ -637,6 +794,7 @@ export class Session {
     }
     agent.setMode(next, this.sysPrompt(next));
     this.persist();
+    this.saveSession();
   }
 
   private async setEffort(arg?: string): Promise<void> {
@@ -665,9 +823,169 @@ export class Session {
     this.effort = next;
     agent.provider.setEffort(this.effort);
     this.persist();
+    this.saveSession();
     const label = agent.provider.effortLabel();
     ui.status(`· effort ${label ?? this.effort ?? "default"}`);
     const advice = effortAdvice(this.chosen, this.effort);
     if (advice) ui.warn(`  ${advice}`);
+  }
+
+  // ---- saved sessions (/sessions) -------------------------------------------
+
+  /** The saved sessions for this workspace, newest first. */
+  private workspaceMetas(): SessionMeta[] {
+    if (!this.store) return [];
+    const key = workspaceKey(this.workspace);
+    return this.store
+      .listMetas()
+      .filter((m) => workspaceKey(m.workspace) === key)
+      .sort((a, b) => b.updatedAt - a.updatedAt);
+  }
+
+  private async manageSessions(): Promise<void> {
+    const { ui } = this;
+    if (!this.store) {
+      ui.warn("Sessions are saved in the web UI only. Run smol --web for switchable, resumable sessions.");
+      return;
+    }
+    const metas = this.workspaceMetas();
+    const rows: SelectOption[] = metas.map((m) => ({
+      label: m.title || "untitled session",
+      hint: `${m.model ?? "?"} · ${relativeTime(m.updatedAt)}${m.id === this.id ? " · current" : ""}`,
+      current: m.id === this.id,
+    }));
+    const NEW = rows.length;
+    const RENAME = NEW + 1;
+    const DEL = NEW + 2;
+    rows.push({ label: "+ New session", hint: "start a fresh conversation" });
+    rows.push({ label: "Rename a session…", hint: "" });
+    rows.push({ label: "Delete a session…", hint: "permanently removes it from disk" });
+    const idx = await ui.select("Sessions", rows);
+    if (idx === null) return;
+    if (idx === NEW) return void (await this.switchToSession(null));
+    if (idx === RENAME) return await this.renameSession(metas);
+    if (idx === DEL) return await this.deleteSession(metas);
+    if (metas[idx].id === this.id) {
+      ui.status("· already in this session");
+      return;
+    }
+    await this.switchToSession(metas[idx].id);
+  }
+
+  private async renameSession(metas: SessionMeta[]): Promise<void> {
+    const { ui } = this;
+    if (!metas.length) {
+      ui.warn("No saved sessions to rename yet.");
+      return;
+    }
+    const idx = await ui.select(
+      "Rename which session?",
+      metas.map((m) => ({ label: m.title || "untitled session", current: m.id === this.id }))
+    );
+    if (idx === null) return;
+    const target = metas[idx];
+    const raw = await ui.prompt("New name", target.title || "session name");
+    if (raw === null) return;
+    const title = raw.replace(/\s+/g, " ").trim().slice(0, 80);
+    if (!title) return;
+    target.title = title;
+    try {
+      this.store!.saveMeta(target);
+    } catch {
+      /* non-fatal */
+    }
+    if (target.id === this.id) {
+      this.title = title;
+      this.titleByUser = true;
+    }
+    ui.status(`· renamed to "${title}"`);
+  }
+
+  private async deleteSession(metas: SessionMeta[]): Promise<void> {
+    const { ui } = this;
+    if (!metas.length) {
+      ui.warn("No saved sessions to delete yet.");
+      return;
+    }
+    const idx = await ui.select(
+      "Delete which session?",
+      metas.map((m) => ({ label: m.title || "untitled session", hint: relativeTime(m.updatedAt), current: m.id === this.id }))
+    );
+    if (idx === null) return;
+    const target = metas[idx];
+    const confirm = await ui.select(`Delete "${target.title || "untitled session"}"?`, [
+      { label: "Cancel" },
+      { label: "Delete permanently", hint: "the transcript cannot be recovered" },
+    ]);
+    if (confirm !== 1) return;
+    try {
+      this.store!.delete(target.id);
+    } catch (err: any) {
+      ui.error(`Could not delete the session: ${err?.message ?? err}`);
+      return;
+    }
+    if (target.id === this.id) {
+      this.newConversation();
+      ui.replayConversation?.([], "");
+    }
+    ui.status(`· deleted "${target.title || "untitled session"}"`);
+  }
+
+  /** Load another saved session, or a fresh one when `id` is null, into this
+   * same agent and rebuild the visible transcript. */
+  private async switchToSession(id: string | null): Promise<void> {
+    const { ui, agent, toolCtx } = this;
+    if (!this.store) return;
+    if (this.hasContent()) this.saveSession();
+
+    if (id === null) {
+      this.newConversation();
+      ui.replayConversation?.([], "");
+      ui.status("· started a fresh session");
+      return;
+    }
+    const meta = this.store.loadMeta(id);
+    const body = this.store.loadBody(id);
+    if (!meta || !body) {
+      ui.warn("That session could not be loaded (its file is missing or unreadable).");
+      return;
+    }
+    const s = body.snapshot;
+    // The saved model may live on another machine, or not be running at all;
+    // re-detect before swapping the provider.
+    if (s.model && (s.model !== this.chosen.id || (s.baseUrl && s.baseUrl !== this.chosen.baseUrl) || (s.backend && s.backend !== this.chosen.backend))) {
+      ui.startSpinner(`loading ${s.model}`);
+      let next: DetectedModel | null = null;
+      try {
+        next = await prepareModel({ model: s.model, backend: s.backend, baseUrl: s.baseUrl, ctx: this.prefs.ctx }, loadConfig());
+      } catch {
+        next = null;
+      } finally {
+        ui.stopSpinner();
+      }
+      if (!next) {
+        ui.warn(`The model this session used ("${s.model}") is not available right now — staying in the current session.`);
+        return;
+      }
+      this.applyModel(next);
+    }
+    // A saved bypass mode is never inherited silently (matches the config).
+    const mode: Mode = s.mode === "bypass" ? "edit" : (s.mode ?? agent.mode);
+    this.effort = s.effort !== undefined ? s.effort : this.effort;
+    agent.setMode(mode, this.sysPrompt(mode));
+    agent.provider.setEffort(this.effort);
+    this.restore(s);
+    this.id = id;
+    this.title = meta.title || this.fallbackTitle();
+    this.createdAt = meta.createdAt || Date.now();
+    this.titleByUser = !!meta.title;
+    this.titleTries = meta.title ? 99 : 0;
+    ui.replayConversation?.(agent.messages, this.title);
+    if (toolCtx.plan.exists) ui.planUpdated(toolCtx.plan);
+    this.persist();
+    if (s.mode === "bypass") {
+      ui.warn("· resumed in edit mode — bypass is never restored; earlier command approvals are not remembered either");
+    }
+    ui.status(`· resumed "${this.title}"`);
   }
 }

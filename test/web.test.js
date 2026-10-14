@@ -140,6 +140,8 @@ test("store: session meta/body round trip, listing and delete", async () => {
   const body = store.loadBody("ab12");
   assert.equal(body.snapshot.messages[0].content, "hi");
   assert.equal(body.events.length, 1);
+  assert.deepEqual(store.loadMeta("ab12"), meta);
+  assert.equal(store.loadMeta("nope"), null);
   assert.equal(store.loadBody("nope"), null);
   fs.writeFileSync(path.join(dir, "sessions", "broken.meta.json"), "{not json");
   assert.equal(store.listMetas().length, 1, "broken files are skipped");

@@ -160,3 +160,33 @@ test("tui: reasoning streams on a live ticker and collapses on content", () => {
   });
   assert.doesNotMatch(after, /weighing the options/);
 });
+
+test("tui: replayConversation clears the screen and rebuilds a resumed transcript", () => {
+  const tui = new Tui();
+  tui.start();
+  capture(() => tui.println("old stuff"));
+
+  const frame = capture(() => {
+    tui.replayConversation(
+      [
+        { role: "system", content: "sys" },
+        { role: "user", content: "add a score counter" },
+        { role: "assistant", content: "Done — added it.", toolCalls: [{ id: "c1", name: "edit_file", args: { path: "game.js" } }] },
+        { role: "tool", content: "Wrote 3 lines", toolCallId: "c1" },
+      ],
+      "score counter"
+    );
+  });
+  assert.match(frame, /resumed session/);
+  assert.match(frame, /score counter/, "the session title is shown");
+  assert.match(frame, /add a score counter/, "the user turn is replayed");
+  assert.match(frame, /Done — added it\./, "the assistant reply is replayed");
+  assert.match(frame, /edit_file/);
+  assert.match(frame, /game\.js/, "the tool call and its arguments are replayed");
+  assert.doesNotMatch(frame, /old stuff/, "the previous transcript is cleared");
+
+  const fresh = capture(() => tui.replayConversation([], ""));
+  assert.match(fresh, /new session/);
+  assert.doesNotMatch(fresh, /add a score counter/, "a new session starts empty");
+  capture(() => tui.close());
+});

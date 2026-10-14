@@ -21,7 +21,7 @@ import { tryFetchJson } from "../util";
 import { Attachment, classifyUpload, extOf, MAX_UPLOAD_BYTES, mimeForExt, safeName } from "../attachments";
 import { Event, SessionChannel, uploadUrl } from "./channel";
 import { PAGE_HTML } from "./page";
-import { SessionMeta, SessionStore, WorkspaceStore, workspaceKey } from "./store";
+import { SessionMeta, SessionStore, WorkspaceStore, workspaceKey } from "../store";
 import { Terminal } from "./terminal";
 
 export type SessionFactory = (ui: SessionChannel, workspace: string, prefs: SessionPrefs) => Promise<Session>;

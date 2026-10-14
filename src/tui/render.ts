@@ -265,6 +265,11 @@ export class Transcript {
     this.entries = this.entries.filter((e) => !pred(e.block));
   }
 
+  /** Drop every block (used when a resumed session replaces the transcript). */
+  clear(): void {
+    this.entries = [];
+  }
+
   get lastIndex(): number {
     return this.entries.length - 1;
   }

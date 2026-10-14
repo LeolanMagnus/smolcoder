@@ -12,7 +12,7 @@ import * as fs from "fs";
 import * as os from "os";
 import * as path from "path";
 import { Agent } from "./agent";
-import { loadConfig } from "./config";
+import { DATA_DIR, loadConfig } from "./config";
 import { ContextManager } from "./context";
 import { EventBus } from "./events";
 import { terminalLogo } from "./logo";
@@ -33,6 +33,7 @@ import {
 import { Mode, ToolContext } from "./tools/index";
 import { pickShell } from "./tools/shell";
 import { TaskManager } from "./tools/tasks";
+import { SessionStore } from "./store";
 import { resolveMode } from "./theme";
 import { Tui } from "./tui/tui";
 import { UI } from "./ui";
@@ -151,8 +152,9 @@ ${c.bold("Slash commands:")}
   /models     switch model         /tasks        background tasks
   /mode       set mode             /logs <id>    task output
   /effort     reasoning effort     /stop <id>    kill a task
-  /context    context usage        /clear        reset conversation
-  /compact    compact now          /exit         quit
+  /context    context usage        /sessions     switch or manage saved sessions
+  /compact    compact now          /clear        start a fresh session
+  /exit       quit
 `;
 
 /** Node fires 'exit' on normal termination but NOT on a killing signal, so
@@ -314,7 +316,14 @@ async function runInteractive(args: CliArgs): Promise<void> {
     }
   }
 
-  const session = new Session(tui, { workspace: args.workspace, chosen, prefs: prefsOf(args), cfg, help: HELP });
+  const session = new Session(tui, {
+    workspace: args.workspace,
+    chosen,
+    prefs: prefsOf(args),
+    cfg,
+    help: HELP,
+    store: new SessionStore(DATA_DIR),
+  });
   session.onExit = () => process.exit(0);
   process.on("exit", () => session.taskManager.killAll());
   installSignalCleanup(() => {
