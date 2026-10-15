@@ -66,16 +66,31 @@ function inlineMd(s) {
   s = s.replace(new RegExp(SENT + "(\\d+)" + SENT, "g"), (m, i) => "<code>" + codes[i] + "</code>");
   return s;
 }
+// Which way a block reads: Hebrew/Arabic letters against English words, with
+// code-shaped words counting less and inline code not at all. A tie is LTR,
+// so English never flips. Majority, not first letter: "Git היא מערכת…" is RTL.
+// Weights ported from motcke/cursor-ext-rtl (Apache-2.0), src/textDirection.ts.
+const RTL_G = /[\u0590-\u08FF\uFB1D-\uFDFF\uFE70-\uFEFF]/g;
+function dirOf(text) {
+  const t = String(text || "").replace(/\`[^\`]*\`/g, " ").replace(/&\w+;/g, " ");
+  const rtl = (t.match(RTL_G) || []).length;
+  const words = t.match(/[A-Za-z][A-Za-z0-9._\/:-]*/g) || [];
+  if (!rtl) return words.length ? "ltr" : "";
+  let ltr = 0;
+  // Sentence punctuation is not part of a word: "peace." is prose, not a path.
+  for (const w of words.map((x) => x.replace(/[._\/:-]+$/, ""))) ltr += /[._\/:]/.test(w) ? 0.25 : /^[A-Z0-9-]{2,}$/.test(w) || /^[a-z]+[A-Z]/.test(w) ? 0.5 : 1;
+  return rtl > ltr ? "rtl" : "ltr";
+}
+// A dir attribute only where a block differs from its container.
+function dirAttr(text, parent) { const d = dirOf(text); return d && d !== parent ? ' dir="' + d + '"' : ""; }
 function renderMarkdown(src) {
   const lines = esc(src).split("\n");
-  let out = "", i = 0, listType = null;
-  const closeList = () => { if (listType) { out += "</" + listType + ">"; listType = null; } };
+  let out = "", i = 0;
   const cells = (row) => row.trim().replace(/^\||\|$/g, "").split("|").map((c) => c.trim());
   while (i < lines.length) {
     const line = lines[i];
     const fence = /^\s*\`\`\`(\w*)\s*$/.exec(line);
     if (fence) {
-      closeList();
       const body = []; i++;
       while (i < lines.length && !/^\s*\`\`\`/.test(lines[i])) { body.push(lines[i]); i++; }
       i++;
@@ -83,42 +98,44 @@ function renderMarkdown(src) {
       continue;
     }
     if (/^\s*\|/.test(line) && i + 1 < lines.length && /^\s*\|?[\s:|-]+\|[\s:|-]*$/.test(lines[i + 1])) {
-      closeList();
       const head = cells(line); i += 2;
       const rows = [];
       while (i < lines.length && /^\s*\|/.test(lines[i])) { rows.push(cells(lines[i])); i++; }
-      out += "<table><thead><tr>" + head.map((h) => "<th>" + inlineMd(h) + "</th>").join("") + "</tr></thead><tbody>";
-      for (const r of rows) out += "<tr>" + r.map((c) => "<td>" + inlineMd(c) + "</td>").join("") + "</tr>";
+      const all = head.concat(...rows).join(" "), d = dirOf(all) || "ltr";
+      const cell = (tag, c) => "<" + tag + dirAttr(c, d) + ">" + inlineMd(c) + "</" + tag + ">";
+      out += "<table" + dirAttr(all, "ltr") + "><thead><tr>" + head.map((h) => cell("th", h)).join("") + "</tr></thead><tbody>";
+      for (const r of rows) out += "<tr>" + r.map((c) => cell("td", c)).join("") + "</tr>";
       out += "</tbody></table>";
       continue;
     }
     const h = /^(#{1,6})\s+(.*)$/.exec(line);
-    if (h) { closeList(); out += "<h" + h[1].length + ">" + inlineMd(h[2]) + "</h" + h[1].length + ">"; i++; continue; }
-    if (/^\s*([-*_])\s*\1\s*\1[\s\-*_]*$/.test(line)) { closeList(); out += "<hr>"; i++; continue; }
+    if (h) { out += "<h" + h[1].length + dirAttr(h[2], "ltr") + ">" + inlineMd(h[2]) + "</h" + h[1].length + ">"; i++; continue; }
+    if (/^\s*([-*_])\s*\1\s*\1[\s\-*_]*$/.test(line)) { out += "<hr>"; i++; continue; }
     // NB: lines are already escaped, so the blockquote marker is "&gt;".
     if (/^\s*&gt;\s?/.test(line)) {
-      closeList();
       const body = [];
       while (i < lines.length && /^\s*&gt;\s?/.test(lines[i])) { body.push(lines[i].replace(/^\s*&gt;\s?/, "")); i++; }
-      out += "<blockquote>" + inlineMd(body.join(" ")) + "</blockquote>";
+      const text = body.join(" ");
+      out += "<blockquote" + dirAttr(text, "ltr") + ">" + inlineMd(text) + "</blockquote>";
       continue;
     }
-    const ul = /^\s*[-*+]\s+(.*)$/.exec(line);
-    const ol = /^\s*\d+[.)]\s+(.*)$/.exec(line);
-    if (ul || ol) {
-      const want = ul ? "ul" : "ol";
-      if (listType !== want) { closeList(); out += "<" + want + ">"; listType = want; }
-      out += "<li>" + inlineMd((ul || ol)[1]) + "</li>";
-      i++; continue;
+    const item = /^\s*[-*+]\s+(.*)$/.test(line) ? /^\s*[-*+]\s+(.*)$/ : /^\s*\d+[.)]\s+(.*)$/.test(line) ? /^\s*\d+[.)]\s+(.*)$/ : null;
+    if (item) {
+      // The whole list first: its direction decides which side the markers sit on.
+      const want = item.source.includes("d+") ? "ol" : "ul", items = [];
+      let m;
+      while (i < lines.length && (m = item.exec(lines[i]))) { items.push(m[1]); i++; }
+      const d = dirOf(items.join(" ")) || "ltr";
+      out += "<" + want + dirAttr(items.join(" "), "ltr") + ">" + items.map((t) => "<li" + dirAttr(t, d) + ">" + inlineMd(t) + "</li>").join("") + "</" + want + ">";
+      continue;
     }
-    if (!line.trim()) { closeList(); i++; continue; }
-    closeList();
+    if (!line.trim()) { i++; continue; }
     const para = [line]; i++;
     while (i < lines.length && lines[i].trim() &&
            !/^(\s*#{1,6}\s|\s*\`\`\`|\s*>\s?|\s*[-*+]\s|\s*\d+[.)]\s|\s*\|)/.test(lines[i])) { para.push(lines[i]); i++; }
-    out += "<p>" + inlineMd(para.join(" ")) + "</p>";
+    const text = para.join(" ");
+    out += "<p" + dirAttr(text, "ltr") + ">" + inlineMd(text) + "</p>";
   }
-  closeList();
   return out;
 }
 
@@ -210,6 +227,7 @@ function fmtSize(n) { return n < 1024 ? n + " B" : n < 1048576 ? (n / 1024).toFi
 // A sent message: its text, then thumbnails for images and links for files.
 function userBubble(m) {
   const d = el("div", "user", m.s || "");
+  d.dir = dirOf(m.s) || "auto";
   if (m.files && m.files.length) {
     const row = el("div", "files");
     for (const f of m.files) {
@@ -332,7 +350,8 @@ function renderPlan(v, p) {
   p.steps.forEach((s, i) => {
     const cls = s.done ? "done" : i === p.current ? "cur" : "todo";
     const mark = s.done ? "✔ " : i === p.current ? "▶ " : "○ ";
-    box.appendChild(el("div", cls, mark + s.text));
+    const step = el("div", cls, mark + s.text); step.dir = dirOf(s.text) || "auto";
+    box.appendChild(step);
   });
   if (v.planEl && v.planEl.isConnected) v.planEl.replaceWith(box); else add(v, box);
   v.planEl = box;
@@ -501,9 +520,74 @@ function show(sid) {
 function newSession(path) {
   post("/sessions/new", { workspace: path }).then((r) => { if (r.id) { pendingSelect = r.id; show(r.id); } else if (r.error) alert(r.error); });
 }
+// Renaming a session in place. The sidebar is rebuilt on every hub update and
+// on a timer, so the edit (which session, what is typed) lives here and each
+// rebuild draws the field again instead of losing the typing.
+let renaming = null;
+let sidebarRebuilding = false;
+// A press on a sidebar row has to reach that row. A rebuild between the press
+// and its release (a rename saved on blur as the press moves focus, a hub
+// update, the timer) replaces the row under the pointer, and the browser then
+// drops the click. So rebuilds wait while a press is held and run once it is
+// released, after the click.
+let sidebarPressed = false, sidebarPending = false;
+$("wslist").addEventListener("pointerdown", () => { sidebarPressed = true; }, true);
+function releaseSidebar() {
+  if (!sidebarPressed) return;
+  sidebarPressed = false;
+  if (sidebarPending) { sidebarPending = false; setTimeout(renderSidebar, 0); }
+}
+window.addEventListener("pointerup", releaseSidebar, true);
+window.addEventListener("pointercancel", releaseSidebar, true);
+// The window losing focus mid-press may swallow the release. Not captured:
+// a captured blur would also fire for the rename field losing focus to the
+// press, and release the hold before the click.
+window.addEventListener("blur", (e) => { if (e.target === window) releaseSidebar(); });
+function sidebarHeld() {
+  if (sidebarPressed) sidebarPending = true;
+  return sidebarPressed;
+}
+function startRename(id, title) {
+  renaming = { id: id, value: title, fresh: true };
+  renderSidebar();
+}
+function endRename(save) {
+  const r = renaming;
+  renaming = null;
+  if (save && r && r.value.trim()) post("/sessions/rename", { id: r.id, title: r.value });
+  renderSidebar();
+}
+function renameField(s) {
+  const field = el("input", "stitle renaming");
+  field.type = "text"; field.value = renaming.value; field.maxLength = 80; field.dir = "auto";
+  field.setAttribute("aria-label", "New name for this session"); field.spellcheck = false;
+  field.oninput = () => { renaming.value = field.value; };
+  field.onclick = field.ondblclick = (e) => e.stopPropagation(); // not "open this session"
+  field.onkeydown = (e) => {
+    // While an IME is composing (Chinese, Japanese, Korean), Enter picks the
+    // characters and Esc drops them: neither is ours, and neither may reach
+    // the page. Safari reports the closing Enter only as keyCode 229.
+    if (e.isComposing || e.keyCode === 229) { e.stopPropagation(); return; }
+    if (e.key === "Enter") { e.preventDefault(); endRename(true); }
+    // Esc stops here: the page-level handler would read it as "cancel the turn".
+    else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); endRename(false); }
+  };
+  // Clicking away keeps what was typed, like any rename field.
+  field.onblur = () => { if (sidebarRebuilding) return; if (renaming && renaming.id === s.id && document.hasFocus()) endRename(true); };
+  setTimeout(() => {
+    field.focus();
+    if (renaming && renaming.fresh) { field.select(); renaming.fresh = false; } // first time: all selected; after a rebuild: the caret stays at the end
+  }, 0);
+  return field;
+}
 function renderSidebar() {
+  if (sidebarHeld()) return;
   const list = $("wslist");
+  // Removing a focused rename field fires blur in Chrome; that is a rebuild,
+  // not the user clicking away, so renameField's blur handler skips it.
+  sidebarRebuilding = true;
   list.innerHTML = "";
+  sidebarRebuilding = false;
   if (!hub.workspaces.length) return;
   for (const w of hub.workspaces) {
     const box = el("div", "ws");
@@ -521,8 +605,13 @@ function renderSidebar() {
       const v = views.get(s.id);
       const row = el("div", "sess " + (s.live ? s.status : "stored") + (active && active.sid === s.id ? " active" : "") + (v && v.unread ? " unread" : ""));
       row.appendChild(el("span", "dot"));
-      row.appendChild(el("span", "stitle" + (s.title ? "" : " untitled"), s.title || "new session"));
+      if (renaming && renaming.id === s.id) row.appendChild(renameField(s));
+      else row.appendChild(el("span", "stitle" + (s.title ? "" : " untitled"), s.title || "new session"));
       row.appendChild(el("span", "stime", rel(s.updatedAt)));
+      const pen = el("button", "iconbtn", "✎");
+      pen.title = "rename (or double-click)"; pen.setAttribute("aria-label", "Rename session");
+      pen.onclick = (e) => { e.stopPropagation(); startRename(s.id, s.title || ""); };
+      row.appendChild(pen);
       const x = el("button", "iconbtn", "×");
       x.title = s.live ? "close session (kept in the list)" : "delete session";
       x.onclick = (e) => {
@@ -533,7 +622,7 @@ function renderSidebar() {
       row.appendChild(x);
       row.title = (s.title || "new session") + (s.model ? " · " + s.model : "") + (s.live ? " · " + s.status : " · saved — click to resume");
       row.onclick = () => select(s.id);
-      row.ondblclick = () => { const t = prompt("Rename session", s.title || ""); if (t !== null && t.trim()) post("/sessions/rename", { id: s.id, title: t }); };
+      row.ondblclick = () => startRename(s.id, s.title || "");
       sl.appendChild(row);
     }
     box.appendChild(sl);
@@ -904,7 +993,7 @@ function submit() {
   scrollToBottom();
   post("/msg", { sid: active.sid, text: v, attachments: files }).then((r) => { if (r && r.error) alert(r.error); });
 }
-function autoGrow() { input.rows = Math.min(6, Math.max(1, input.value.split("\n").length)); }
+function autoGrow() { input.rows = Math.min(6, Math.max(1, input.value.split("\n").length)); input.dir = dirOf(input.value) || "auto"; }
 input.addEventListener("input", () => { menuIdx = 0; renderMenu(); autoGrow(); });
 input.addEventListener("keydown", (e) => {
   const items = menuItems();
