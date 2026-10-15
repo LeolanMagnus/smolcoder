@@ -36,6 +36,7 @@ export function notFoundHelp(platform: NodeJS.Platform = process.platform): stri
     "A model server only answers other machines once it is told to. On the machine that runs the models:\n" +
     "  · Ollama: turn on \"Expose Ollama to the network\" in its settings (Linux or headless: set OLLAMA_HOST=0.0.0.0 and restart it).\n" +
     "  · LM Studio: Developer tab → Local Server → turn on \"Serve on Local Network\".\n" +
+    "  · oMLX: Settings → Server → Listen Address → the network option. MTPLX: mtplx serve --host 0.0.0.0 --api-key <key>.\n" +
     "  · Windows: allow the server through the firewall for Private networks when it asks.\n" +
     (platform === "darwin"
       ? "On this Mac: System Settings → Privacy & Security → Local Network must allow your terminal app, or nothing on the network is visible.\n"
@@ -59,28 +60,72 @@ async function pickServer(ui: FlowUI, servers: ServerInfo[]): Promise<ServerInfo
   return pick === null ? null : servers[pick];
 }
 
+interface FoundServer {
+  backend: keyof typeof BACKEND_NAMES;
+  url: string;
+  models: number;
+}
+
 /** A scan or an address can turn up an oMLX or MTPLX that answers but lists
- * nothing until it has its key. Ask for it, check it with the server and
- * keep it, and update its model count in place. False means the machine
- * should not be added. */
-export async function unlockServers(ui: FlowUI, servers: { backend: string; url: string; models: number }[], hostname: string): Promise<boolean> {
+ * nothing until it has its key. Ask for each, check it with the server, and
+ * update its model count in place. Returns the keys that worked, by the URL
+ * the server answered on. Nothing is saved here: the machine may not be added,
+ * and a search finds it by IP while it is saved by name. A key that is
+ * skipped or refused leaves that server locked; the rest of the machine can
+ * still be added. */
+export async function unlockServers(ui: FlowUI, servers: FoundServer[], hostname: string): Promise<{ url: string; key: string }[]> {
+  const keys: { url: string; key: string }[] = [];
   for (const s of servers) {
     if (!KEYED.includes(s.backend) || s.models > 0) continue;
-    const name = BACKEND_NAMES[s.backend as keyof typeof BACKEND_NAMES];
+    const name = BACKEND_NAMES[s.backend];
     if (!s.url.startsWith("https://") && !LOOPBACK_URL.test(s.url))
       ui.warn(`The connection to ${hostname} is plain http: the key travels unencrypted, so it is only as safe as that network.`);
     const key = await askKey(ui, `${name} at ${hostname}`);
-    if (!key) return false;
+    if (!key) continue;
     ui.startSpinner(`checking the key with ${hostname}`);
     const again = await identifyServer(s.url, 4000, key);
     ui.stopSpinner();
     if (!again?.models.length) {
       ui.warn(`${name} at ${hostname} did not accept that API key.`);
-      return false;
+      continue;
     }
-    setKeys([s.url], key);
+    keys.push({ url: s.url, key });
     s.models = again.models.length;
   }
+  return keys;
+}
+
+/** The URL a saved address reaches a found server at: the same port, on the
+ * name the machine is saved under. */
+function savedUrlFor(address: string, url: string): string {
+  const port = new URL(url).port;
+  return hostUrls({ address }).find((u) => new URL(u).port === port) ?? url;
+}
+
+/** Save a machine once its servers are known and unlocked. Not when all it
+ * runs is keyed servers that are still locked: added, it would list nothing.
+ * Keys are saved for the address the machine is saved under, so detection
+ * finds them; a replaced entry's keys go with it. Exported for tests. */
+export function saveFoundMachine(
+  ui: FlowUI,
+  m: { address: string; hostname: string; servers: FoundServer[]; keys: { url: string; key: string }[]; replace?: SavedHost }
+): boolean {
+  if (m.servers.every((s) => KEYED.includes(s.backend) && !s.models)) {
+    ui.warn(`${m.hostname} lists no models without its API key, so it was not added.`);
+    return false;
+  }
+  let hosts = loadConfig().hosts ?? [];
+  if (m.replace) {
+    hosts = removeHost(hosts, m.replace.address);
+    if (m.replace.address.toLowerCase() !== m.address.toLowerCase()) setKeys(hostUrls(m.replace));
+  }
+  save(addHost(hosts, { address: m.address, ...(m.replace?.name ? { name: m.replace.name } : {}) }));
+  for (const k of m.keys) setKeys([savedUrlFor(m.address, k.url)], k.key);
+  const label = m.replace?.name ?? m.hostname;
+  ui.status(`· added ${label} — ${describeServers(m.servers)}`);
+  for (const s of m.servers)
+    if (KEYED.includes(s.backend) && !s.models)
+      ui.status(`  ${BACKEND_NAMES[s.backend]} there still needs its API key: Network hosts → ${label} → API key.`);
   return true;
 }
 
@@ -115,13 +160,9 @@ async function enterAddress(ui: FlowUI, replace?: SavedHost): Promise<boolean> {
   }
   if (!(await confirmOutsideNetwork(ui, parsed.hostname, found[0].baseUrl))) return false;
   // oMLX and MTPLX answer /health without a key but list nothing without one.
-  const entries = found.map((x) => ({ backend: x.backend, url: x.baseUrl, models: x.models.length }));
-  if (!(await unlockServers(ui, entries, parsed.hostname))) return false;
-  let hosts = loadConfig().hosts ?? [];
-  if (replace) hosts = removeHost(hosts, replace.address);
-  save(addHost(hosts, { address: parsed.address, ...(replace?.name ? { name: replace.name } : {}) }));
-  ui.status(`· added ${replace?.name ?? parsed.hostname} — ${describeServers(entries)}`);
-  return true;
+  const servers = found.map((x) => ({ backend: x.backend, url: x.baseUrl, models: x.models.length }));
+  const keys = await unlockServers(ui, servers, parsed.hostname);
+  return saveFoundMachine(ui, { address: parsed.address, hostname: parsed.hostname, servers, keys, replace });
 }
 
 function savedAddressesOf(found: FoundHost, hosts: SavedHost[]): boolean {
@@ -170,12 +211,10 @@ async function searchNetwork(ui: FlowUI, subnets: Subnet[], replace?: SavedHost)
     }
     // A machine whose oMLX or MTPLX waits for its key is no use added with no
     // models: ask here, exactly as typing its address would.
-    const entries = f.servers.map((x) => ({ backend: x.backend, url: x.url, models: x.models }));
-    if (!(await unlockServers(ui, entries, f.name ?? f.ip))) continue;
+    const servers = f.servers.map((x) => ({ backend: x.backend, url: x.url, models: x.models }));
+    const keys = await unlockServers(ui, servers, f.name ?? f.ip);
     // The name survives the router handing out a new IP; fall back to the IP.
-    const base = replace ? removeHost(hosts, replace.address) : hosts;
-    save(addHost(base, { address: f.name ?? f.ip, ...(replace?.name ? { name: replace.name } : {}) }));
-    ui.status(`· added ${replace?.name ?? f.name ?? f.ip} — ${describeServers(entries)}`);
+    if (!saveFoundMachine(ui, { address: f.name ?? f.ip, hostname: f.name ?? f.ip, servers, keys, replace })) continue;
     added = true;
     if (replace || found.every((x) => savedAddressesOf(x, loadConfig().hosts ?? []))) return true;
   }

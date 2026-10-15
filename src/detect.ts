@@ -104,9 +104,11 @@ export function lmStudioBaseUrls(configuredPort?: number): string[] {
 }
 
 /** Loopback spellings for oMLX and MTPLX: the ports their settings name,
- * then the default both share. */
-function omlxBaseUrls(): string[] {
-  const ports = [readOmlxSettings().port, readMtplxPort(), OMLX_PORT].filter((p, i, all): p is number => !!p && all.indexOf(p) === i);
+ * then the default both share. Both are Apple Silicon servers, so elsewhere
+ * only a port their settings name is tried: 8000 is too common (vLLM, Django,
+ * uvicorn) to probe on every computer. Exported for tests. */
+export function omlxBaseUrls(platform: NodeJS.Platform = process.platform, configured: (number | undefined)[] = [readOmlxSettings().port, readMtplxPort()]): string[] {
+  const ports = [...configured, platform === "darwin" ? OMLX_PORT : undefined].filter((p, i, all): p is number => !!p && all.indexOf(p) === i);
   return ports.flatMap((port) => loopbackAliases(`http://127.0.0.1:${port}`));
 }
 

@@ -16,7 +16,7 @@ export const DATA_DIR = path.join(os.homedir(), ".smolcoder");
 /** Another machine that serves models, added from the model picker. */
 export interface SavedHost {
   /** What to connect to: a bare host ("192.168.1.50", "gpu-box.local") means
-   * "look for Ollama and LM Studio on their usual ports"; a full URL or
+   * "look for every model server on its usual port"; a full URL or
    * host:port names one server exactly. */
   address: string;
   /** Display name; defaults to the host part of the address. */
@@ -63,9 +63,10 @@ export function loadConfig(): Config {
 
 export function saveConfig(cfg: Config): void {
   try {
+    // It can hold API keys: private to its owner, also when it already
+    // existed — and made so before a key is written into it, not after.
+    if (fs.existsSync(CONFIG_PATH)) fs.chmodSync(CONFIG_PATH, 0o600);
     fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2), { mode: 0o600 });
-    // It can hold API keys: private to its owner, also when it already existed.
-    fs.chmodSync(CONFIG_PATH, 0o600);
   } catch {
     /* non-fatal */
   }

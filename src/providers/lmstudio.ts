@@ -248,7 +248,7 @@ export class LmStudioProvider implements Provider {
 
     if (body.stream === false) {
       const data: any = await res.json();
-      if (data.error || !data.choices?.[0]?.message) throw new Error(`LM Studio returned an invalid completion: ${data.error?.message ?? "missing message"}`);
+      if (data.error || !data.choices?.[0]?.message) throw new Error(`${this.serverName} returned an invalid completion: ${data.error?.message ?? "missing message"}`);
       const msg = data.choices?.[0]?.message ?? {};
       const toolCalls: ToolCall[] = (msg.tool_calls ?? []).map((tc: any) => ({
         id: tc.id || nextCallId(),
@@ -327,7 +327,7 @@ export class LmStudioProvider implements Provider {
     };
 
     for await (const line of responseLines(res, activity)) handleLine(line);
-    if (!finished) throw new Error("LM Studio stream ended before completion; the response was discarded");
+    if (!finished) throw new Error(`${this.serverName} stream ended before completion; the response was discarded`);
 
     const toolCalls: ToolCall[] = [...partials.entries()]
       .sort((a, b) => a[0] - b[0])

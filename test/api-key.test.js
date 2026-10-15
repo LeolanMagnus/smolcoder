@@ -154,9 +154,13 @@ test("api key: an environment key goes only to servers you chose, never to one a
     // Anything a network search turned up: it only has to answer like oMLX.
     assert.equal(omlxApiKey("http://192.168.1.77:8000", {}), undefined);
     assert.equal(mtplxApiKey("http://192.168.1.77:8000"), undefined);
-    // oMLX's own settings key stays on this computer, as before.
+    // oMLX's own settings key stays on this computer, and there it comes first.
     assert.equal(omlxApiKey("http://192.168.1.77:8000", { apiKey: "settings" }), undefined);
-    assert.equal(omlxApiKey("http://127.0.0.1:8000", { apiKey: "settings" }), "env");
+    assert.equal(omlxApiKey("http://127.0.0.1:8000", { apiKey: "settings" }), "settings");
+    // A saved key is no exception: it can outlive its machine's address.
+    setKeys(["http://192.168.1.77:8000"], "left-over");
+    assert.equal(omlxApiKey("http://192.168.1.77:8000", {}), undefined);
+    assert.equal(mtplxApiKey("http://192.168.1.77:8000"), undefined);
   } finally {
     delete process.env.OMLX_API_KEY;
     delete process.env.MTPLX_API_KEY;
@@ -188,17 +192,54 @@ test("api key: a locked server found by a scan is unlocked before the machine is
   try {
     const found = [{ backend: "omlx", url, models: 0 }, { backend: "ollama", url: "http://127.0.0.1:1", models: 3 }];
     const wrong = scriptedUI({ texts: ["nope"] });
-    assert.equal(await unlockServers(wrong, found, "studio.local"), false, "a rejected key does not add the machine");
-    assert.deepEqual(loadConfig().keys, {});
+    assert.deepEqual(await unlockServers(wrong, found, "studio.local"), [], "a rejected key unlocks nothing");
+    assert.equal(found[0].models, 0);
     assert.match(wrong.shown.lines.join("\n"), /did not accept that API key/);
 
     const ui = scriptedUI({ texts: [KEY] });
-    assert.equal(await unlockServers(ui, found, "studio.local"), true);
-    assert.deepEqual(loadConfig().keys, { [url]: KEY });
+    assert.deepEqual(await unlockServers(ui, found, "studio.local"), [{ url, key: KEY }]);
+    assert.equal(found[0].models, 1, "the model count is updated in place");
     assert.deepEqual(ui.shown.prompts, [{ title: "API key for oMLX at studio.local", secret: true }], "only the locked server is asked about");
+    assert.deepEqual(loadConfig().keys, {}, "nothing is saved until the machine is");
   } finally {
     await srv.close();
   }
+});
+
+test("api key: a key from a search is saved for the name the machine is saved under", () => {
+  const { saveFoundMachine } = require("../dist/network");
+  saveConfig({});
+  const ui = scriptedUI({});
+  // A search reaches servers by IP; a machine with a name is saved by name.
+  const servers = [{ backend: "omlx", url: "http://192.168.1.77:8000", models: 2 }];
+  assert.equal(saveFoundMachine(ui, { address: "studio.lan", hostname: "studio.lan", servers, keys: [{ url: "http://192.168.1.77:8000", key: KEY }] }), true);
+  assert.deepEqual(loadConfig().hosts, [{ address: "studio.lan" }]);
+  assert.deepEqual(loadConfig().keys, { "http://studio.lan:8000": KEY });
+  // So detection, which asks the saved name, sends it — and the IP gets nothing.
+  assert.equal(omlxApiKey("http://studio.lan:8000", {}), KEY);
+  assert.equal(omlxApiKey("http://192.168.1.77:8000", {}), undefined);
+
+  // Found again at a new address: the old entry's keys go with it.
+  const moved = [{ backend: "omlx", url: "http://192.168.1.80:8000", models: 2 }];
+  saveConfig({ hosts: [{ address: "192.168.1.77", name: "Studio" }], keys: { "http://192.168.1.77:8000": KEY } });
+  assert.equal(saveFoundMachine(ui, { address: "192.168.1.80", hostname: "192.168.1.80", servers: moved, keys: [{ url: "http://192.168.1.80:8000", key: KEY }], replace: { address: "192.168.1.77", name: "Studio" } }), true);
+  assert.deepEqual(loadConfig().hosts, [{ address: "192.168.1.80", name: "Studio" }]);
+  assert.deepEqual(loadConfig().keys, { "http://192.168.1.80:8000": KEY });
+});
+
+test("api key: a skipped key keeps the rest of the machine, but a machine of locked servers is not added", () => {
+  const { saveFoundMachine } = require("../dist/network");
+  saveConfig({});
+  const ui = scriptedUI({});
+  const mixed = [{ backend: "omlx", url: "http://192.168.1.77:8000", models: 0 }, { backend: "ollama", url: "http://192.168.1.77:11434", models: 12 }];
+  assert.equal(saveFoundMachine(ui, { address: "192.168.1.77", hostname: "192.168.1.77", servers: mixed, keys: [] }), true, "its Ollama is still worth having");
+  assert.match(ui.shown.lines.join("\n"), /oMLX there still needs its API key: Network hosts → 192\.168\.1\.77 → API key/);
+
+  saveConfig({});
+  const locked = scriptedUI({});
+  assert.equal(saveFoundMachine(locked, { address: "192.168.1.78", hostname: "192.168.1.78", servers: [{ backend: "omlx", url: "http://192.168.1.78:8000", models: 0 }], keys: [] }), false);
+  assert.deepEqual(loadConfig().hosts, []);
+  assert.match(locked.shown.lines.join("\n"), /lists no models without its API key/);
 });
 
 test("api key: a replacement key is checked before it replaces a working one", async () => {

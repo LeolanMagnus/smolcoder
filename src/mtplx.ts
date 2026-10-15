@@ -25,11 +25,11 @@ export function readMtplxPort(home = os.homedir()): number | undefined {
 }
 
 /** A key saved for that server from the picker, else MTPLX_API_KEY — and
- * only for a server the user chose, never one a network search found. */
+ * only for a server the user chose, never one a network search found (a
+ * saved key included: it can outlive its machine's address). */
 export function mtplxApiKey(base: string): string | undefined {
-  const saved = savedKey(base);
-  if (saved) return saved;
-  return isChosenServer(base, loadConfig().hosts ?? []) ? process.env.MTPLX_API_KEY : undefined;
+  if (!isChosenServer(base, loadConfig().hosts ?? [])) return undefined;
+  return savedKey(base) || process.env.MTPLX_API_KEY || undefined;
 }
 
 export function mtplxHeaders(base: string): Record<string, string> {

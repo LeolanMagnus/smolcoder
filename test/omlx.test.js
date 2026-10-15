@@ -62,8 +62,21 @@ test("omlx: the local settings key never leaves this computer, and an env key on
     process.env.OMLX_API_KEY = "from-env";
     // Only for a machine that was added by hand — not one a network scan found.
     assert.equal(omlxApiKey("http://192.168.1.50:8000", settings), undefined);
-    assert.equal(omlxApiKey("http://127.0.0.1:8000", settings), "from-env");
+    // On this computer the local oMLX's own key comes first: the environment
+    // one is usually meant for an oMLX on another machine.
+    assert.equal(omlxApiKey("http://127.0.0.1:8000", settings), KEY);
+    assert.equal(omlxApiKey("http://127.0.0.1:8000", {}), "from-env");
   }));
+
+test("omlx: port 8000 is only tried on this computer on macOS, unless the settings name a port", () => {
+  const { omlxBaseUrls } = require("../dist/detect");
+  const ports = (urls) => [...new Set(urls.map((u) => Number(new URL(u).port)))];
+  assert.deepEqual(ports(omlxBaseUrls("darwin", [])), [8000]);
+  assert.deepEqual(ports(omlxBaseUrls("darwin", [8123, 8001])), [8123, 8001, 8000]);
+  // vLLM, Django and uvicorn live on 8000 too: elsewhere nothing is assumed.
+  assert.deepEqual(omlxBaseUrls("win32", []), []);
+  assert.deepEqual(ports(omlxBaseUrls("linux", [8123, undefined])), [8123]);
+});
 
 test("omlx: identified by /health and listed with the API key", async () => {
   const seen = [];

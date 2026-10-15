@@ -37,14 +37,15 @@ export function readOmlxSettings(home = os.homedir()): OmlxSettings {
 const LOOPBACK = /^https?:\/\/(localhost|127(?:\.\d+){3}|\[::1\])(?=[:/]|$)/i;
 
 /** The key to send to an oMLX at `base`, if we know one: one saved for that
- * server from the picker, then OMLX_API_KEY, then (this computer only) oMLX's
- * own. Nothing at all for a server a network search found: answering like an
- * oMLX is not a reason to hand it a key. */
+ * server from the picker; on this computer, oMLX's own; then OMLX_API_KEY.
+ * Nothing at all for a server the user did not choose — not even a saved key,
+ * which can outlive its machine's address: answering like an oMLX is not a
+ * reason to hand it a key. */
 export function omlxApiKey(base: string, settings: OmlxSettings = readOmlxSettings()): string | undefined {
-  const saved = savedKey(base);
-  if (saved) return saved;
   if (!isChosenServer(base, loadConfig().hosts ?? [])) return undefined;
-  return process.env.OMLX_API_KEY || (LOOPBACK.test(base) ? settings.apiKey : undefined);
+  // The local oMLX's own key beats the environment one, which is usually
+  // meant for an oMLX on another machine.
+  return savedKey(base) || (LOOPBACK.test(base) ? settings.apiKey : undefined) || process.env.OMLX_API_KEY || undefined;
 }
 
 export function omlxHeaders(base: string): Record<string, string> {
