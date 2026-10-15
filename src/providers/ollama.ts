@@ -79,7 +79,9 @@ export class OllamaProvider implements Provider {
     private numCtx?: number,
     maxOutputTokens = MAX_OUTPUT_TOKENS,
     /** Whether the model accepts images (from /api/show capabilities). */
-    public readonly vision?: boolean
+    public readonly vision?: boolean,
+    /** Whether the model can call tools; false = strip tool schemas before sending. */
+    public readonly toolsSupported?: boolean
   ) {
     this.label = `ollama · ${modelId}`;
     this.maxOutputTokens = maxOutputTokens;
@@ -120,10 +122,16 @@ export class OllamaProvider implements Provider {
 
   private async chatScheduled(messages: Msg[], tools: ToolSpec[], opts: ChatOptions): Promise<ChatResult> {
     const effort = opts.effortOverride ?? this.effort;
+    // A model whose /api/show capabilities lack "tools" cannot consume tool
+    // schemas: Ollama answers 400 "does not support tools" and the turn dies
+    // (the same class as the empty-reply cliff). Negotiate up front — drop the
+    // tool schemas and let the agent answer in plain text. Unknown capability
+    // (older Ollama) keeps tools, matching the previous behavior.
+    const sendTools = this.toolsSupported === false ? [] : tools;
     const makeBody = (stream: boolean, think: boolean | string | undefined) => ({
       model: this.modelId,
       messages: toWire(messages),
-      tools: tools.length ? toWireTools(tools) : undefined,
+      tools: sendTools.length ? toWireTools(sendTools) : undefined,
       stream,
       keep_alive: KEEP_ALIVE,
       ...(think !== undefined ? { think } : {}),

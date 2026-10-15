@@ -65,7 +65,7 @@ export function outputBudget(window: number): number {
 export function makeProvider(m: DetectedModel): Provider {
   const maxOut = outputBudget(m.contextWindow);
   return m.backend === "ollama"
-    ? new OllamaProvider(m.baseUrl, m.id, m.contextWindow, m.numCtx, maxOut, m.vision)
+    ? new OllamaProvider(m.baseUrl, m.id, m.contextWindow, m.numCtx, maxOut, m.vision, m.toolsSupported)
     : new LmStudioProvider(m.baseUrl, m.id, m.contextWindow, maxOut, m.reasoning, m.vision);
 }
 

@@ -44,6 +44,8 @@ export interface DetectedModel {
   reasoning?: ReasoningInfo;
   /** Whether the model accepts image input; undefined when the backend did not say. */
   vision?: boolean;
+  /** Whether the model can call tools (Ollama capabilities "tools"); undefined when unknown. */
+  toolsSupported?: boolean;
   /** What the backend says about the model (context guessed, not loaded…).
    * Rewritten as the model loads: resolveContextWindow replaces or clears it. */
   note?: string;
@@ -442,8 +444,14 @@ export async function resolveContextWindow(
       headers: { "content-type": "application/json" },
       body: JSON.stringify({ model: model.id }),
     });
-    // Newer Ollama lists what the model can do; "vision" means it takes images.
-    if (Array.isArray(info?.capabilities)) model = { ...model, vision: info.capabilities.includes("vision") };
+    // Newer Ollama lists what the model can do; "vision" means it takes images
+    // and "tools" means it can call tools. Read both so the harness can drop
+    // tool schemas for models whose build does not support them instead of
+    // getting a 400 "does not support tools" mid-turn.
+    if (Array.isArray(info?.capabilities)) {
+      const caps: string[] = info.capabilities;
+      model = { ...model, vision: caps.includes("vision"), toolsSupported: caps.includes("tools") };
+    }
     let max: number | undefined;
     const mi = info?.model_info;
     if (mi && typeof mi === "object") {
