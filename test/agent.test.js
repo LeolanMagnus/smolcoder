@@ -204,6 +204,57 @@ test("the create-plan reminder is not repeated across the turn", async () => {
   assert.equal(total, 1, "exactly one reminder in the transcript");
 });
 
+test("interactive: an unplanned file edit is refused until a plan exists", async () => {
+  const provider = scriptedProvider([
+    { toolCalls: [{ id: "r1", name: "read_file", args: { path: "a.txt" } }] },
+    { toolCalls: [{ id: "r2", name: "read_file", args: { path: "a.txt" } }] },
+    { toolCalls: [{ id: "r3", name: "read_file", args: { path: "a.txt" } }] },
+    { toolCalls: [{ id: "w1", name: "write_file", args: { path: "out.txt", content: "hi" } }] },
+    { toolCalls: [{ id: "p1", name: "plan", args: { steps: "write out.txt" } }] },
+    { toolCalls: [{ id: "w2", name: "write_file", args: { path: "out.txt", content: "hi" } }] },
+    { content: "done" },
+  ]);
+  const agent = makeAgent(provider, fakeUi(), "build", true);
+  fs.writeFileSync(path.join(agent.toolCtx.workspace, "a.txt"), "module a");
+  await agent.runTurn("write out.txt in several steps");
+  const gated = provider.seen.some((msgs) =>
+    msgs.some((m) => m.role === "tool" && /set a short plan before changing files/.test(m.content)));
+  assert.ok(gated, "the unplanned edit was refused with plan coaching");
+  assert.equal(fs.readFileSync(path.join(agent.toolCtx.workspace, "out.txt"), "utf8"), "hi", "the edit lands once a plan is set");
+  assert.ok(agent.toolCtx.plan.exists, "a plan now exists");
+});
+
+test("headless: the decomposition gate never blocks edits (acceptance is the contract)", async () => {
+  const provider = scriptedProvider([
+    { toolCalls: [{ id: "r1", name: "read_file", args: { path: "a.txt" } }] },
+    { toolCalls: [{ id: "r2", name: "read_file", args: { path: "a.txt" } }] },
+    { toolCalls: [{ id: "r3", name: "read_file", args: { path: "a.txt" } }] },
+    { toolCalls: [{ id: "w1", name: "write_file", args: { path: "out.txt", content: "hi" } }] },
+    { content: "done" },
+  ]);
+  const agent = makeAgent(provider, fakeUi(), "build", false);
+  fs.writeFileSync(path.join(agent.toolCtx.workspace, "a.txt"), "module a");
+  await agent.runTurn("write out.txt");
+  assert.equal(fs.readFileSync(path.join(agent.toolCtx.workspace, "out.txt"), "utf8"), "hi");
+});
+
+test("the plan gate never deadlocks a model that refuses to plan", async () => {
+  const writes = Array.from({ length: 5 }, (_, i) => ({
+    toolCalls: [{ id: `w${i}`, name: "write_file", args: { path: "out.txt", content: `v${i}` } }],
+  }));
+  const provider = scriptedProvider([
+    { toolCalls: [{ id: "r1", name: "read_file", args: { path: "a.txt" } }] },
+    { toolCalls: [{ id: "r2", name: "read_file", args: { path: "a.txt" } }] },
+    { toolCalls: [{ id: "r3", name: "read_file", args: { path: "a.txt" } }] },
+    ...writes,
+    { content: "done" },
+  ]);
+  const agent = makeAgent(provider, fakeUi(), "build", true);
+  fs.writeFileSync(path.join(agent.toolCtx.workspace, "a.txt"), "module a");
+  await agent.runTurn("keep writing");
+  assert.equal(fs.readFileSync(path.join(agent.toolCtx.workspace, "out.txt"), "utf8"), "v4", "after a few refusals the edit is allowed through");
+});
+
 test("build mode: an in-workspace command runs without asking", async () => {
   const provider = scriptedProvider([
     { content: "", toolCalls: [{ id: "c1", name: "run_command", args: { command: "echo hello-from-tree" } }] },

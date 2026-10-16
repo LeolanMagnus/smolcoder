@@ -32,7 +32,7 @@ import { isHistoryPlaceholder } from "./history";
 import { IMAGE_TOKENS } from "./attachments";
 
 const MSG_OVERHEAD_TOKENS = 8;
-const EVICT_KEEP_RECENT = 6; // never evict tool results in the last N messages
+const EVICT_KEEP_RECENT = 6; // minimum tail protected from eviction (grows with the window)
 const EVICT_STUB = "[old output removed to save space — run the tool again if you need it]";
 const STALE_READ_STUB = "[this read is out of date — the file was rewritten afterwards. Call read_file again if you need its current content.]";
 const STALE_READ_MIN_CHARS = 1500; // small reads are cheaper to keep than to re-prefill around
@@ -151,9 +151,25 @@ export class ContextManager {
   }
 
   /** Leave room for several related reads, their calls, and the next edit.
-   * This is a character cap, deliberately much smaller than input tokens. */
+   * This is a character cap, deliberately much smaller than input tokens. The
+   * ceiling scales with the window: a fixed 10k cap that suits a 4k-16k
+   * window would throw away most of a 64k one. */
   toolResultCharLimit(): number {
-    return Math.min(10000, Math.max(600, Math.floor(this.usableWindow() * 0.4)));
+    return Math.min(48000, Math.max(600, Math.floor(this.usableWindow() * 0.4)));
+  }
+
+  /** How many trailing messages stay immune to tier-1 eviction. The 6-message
+   * floor is for the small windows this harness was built around; a roomier
+   * context can afford a longer working tail. Never evicts below the floor. */
+  private evictKeepRecent(): number {
+    return Math.max(EVICT_KEEP_RECENT, Math.min(16, Math.round(this.usableWindow() / 5000)));
+  }
+
+  /** Completed write payloads smaller than this stay in the transcript; the
+   * ceiling grows with the window so a roomy context keeps more receipts
+   * before collapsing them to harness history records. */
+  private writeCollapseMinChars(): number {
+    return Math.max(1200, Math.min(8000, Math.floor(this.usableWindow() * 0.08)));
   }
 
   /** Learn conservative tokenizer overhead without adding a tokenizer dependency. */
@@ -274,7 +290,7 @@ export class ContextManager {
         if (!receipt || !/^(Created|Overwrote|Edited) /.test(receipt.content)) continue;
         const keys = call.name === "write_file" ? ["content"] : call.name === "edit_file" ? ["old_text", "new_text"] : [];
         if (!keys.some((key) => typeof call.args[key] === "string" &&
-          (call.args[key].length > 1200 || isHistoryPlaceholder(call.args[key])))) continue;
+          (call.args[key].length > this.writeCollapseMinChars() || isHistoryPlaceholder(call.args[key])))) continue;
         removed.add(call.id);
         receipts.push(`${call.name}: ${truncateEnd(receipt.content, 600)}`);
       }
@@ -347,7 +363,7 @@ export class ContextManager {
     this.collapseCompletedWrites(messages, 1, latestGroup - 1);
 
     // Tier 1b: evict old tool-result bodies, oldest first.
-    const evictBoundary = Math.max(1, messages.length - EVICT_KEEP_RECENT);
+    const evictBoundary = Math.max(1, messages.length - this.evictKeepRecent());
     for (let i = 1; i < evictBoundary; i++) {
       const m = messages[i];
       if (m.role === "tool" && !m.evicted && m.content.length > 200) {

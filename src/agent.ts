@@ -46,6 +46,17 @@ const MODE_CHANGE_NOTE: Record<Mode, string> = {
  * Auto-approval via always-allow only applies to commands without them. */
 const SHELL_META = /[;&|`$<>(){}\n\r\\]/;
 
+/** Decomposition gate: an interactive model that has already started work must
+ * set a plan before it may change files. It must have done at least this many
+ * tool calls first, so a trivial single-edit task is never gated. */
+const PLAN_GATE_MIN_CALLS = 3;
+/** Never deadlock a stubborn model: after this many refusals, let the edit run. */
+const PLAN_GATE_MAX_BLOCKS = 3;
+const PLAN_GATE_MESSAGE =
+  'Error: set a short plan before changing files — this task spans several steps. ' +
+  'Call plan with {"action":"set","steps":"one runnable increment per line"} now, then retry the edit. ' +
+  'The plan survives compaction and gives you the next step.';
+
 /** Exported for tests: does the always-allow set cover this exact command?
  * First-token match alone is bypassable (`npm -v; evil`) because commands run
  * under a real shell — so chained/piped/substituted commands always re-prompt. */
@@ -66,6 +77,10 @@ export class Agent {
   /** One-shot per turn: reminded the model to CREATE a plan when it has not
    * yet engaged the plan tool but the loop is clearly multi-step. */
   private planCreateNudged = false;
+  /** Interactive decomposition gate: how many times this turn an unplanned
+   * file edit was refused. Capped so a model that ignores the plan cannot lock
+   * itself out of the work. */
+  private planGateBlocks = 0;
   private abort: AbortController | null = null;
   /** Speed/size figures for the last completed turn (for the turn-end label
    * and headless stats). */
@@ -137,6 +152,7 @@ export class Agent {
     this.currentRequest = "";
     this.planNudged = false;
     this.planCreateNudged = false;
+    this.planGateBlocks = 0;
     this.outcome = "idle";
     this.lastError = null;
     this.verificationResult = null;
@@ -168,6 +184,7 @@ export class Agent {
     this.currentRequest = currentRequest;
     this.planNudged = false;
     this.planCreateNudged = false;
+    this.planGateBlocks = 0;
     this.ctxMgr.resetAnchor();
     this.repairTranscript("[Tool execution was interrupted by a restart. Its outcome is unknown. Inspect files or command state before retrying; do not assume it failed or rerun it blindly.]");
   }
@@ -293,6 +310,7 @@ export class Agent {
     this.progressFailure = "";
     this.sameVerificationFailures = 0;
     this.planCreateNudged = false;
+    this.planGateBlocks = 0;
     // Earlier user decisions may exist only in a previous turn's summary.
     // Only a fresh conversation can safely discard every old narrative.
     this.canRefreshVerification = !this.originalRequest && this.messages.length === 1;
@@ -495,39 +513,46 @@ export class Agent {
             output = `Error: the tool "${call.name}" is not available in ${MODE_LABELS[this.mode]} mode. Available tools: ${this.tools.map((t) => t.name).join(", ")}.`;
           } else {
             this.toolCtx.resultCharLimit = this.ctxMgr.toolResultCharLimit();
-            if (call.name === "run_command") {
-              let end = this.messages.length - 1;
-              while (this.messages[end]?.role === "tool") end--;
-              this.ctxMgr.prepareBackground(this.messages.slice(0, end), this.tools, this.provider, this.compactState());
-            }
-            output = await this.gateAndExecute(call.name, call.args, signal);
-            observedOutput = output; // fingerprint real evidence before coaching/reminders
-            toolCallsThisTurn++;
-            stats.toolCalls++;
-            // Tier-0 context hygiene: a full overwrite makes every earlier
-            // read of that file wrong. Stub them out right away.
-            if ((call.name === "write_file" || call.name === "edit_file") && !output.startsWith("Error") && typeof call.args?.path === "string") {
-              wroteThisTurn = true;
-              this.ctxMgr.evictStaleReads(this.messages, call.args.path);
-              repeatedReads.clear();
-              readsSinceAction = 0;
-            }
-            // Keep the plan honest: small models forget to mark steps done
-            // mid-flow, leaving the checklist stale for minutes. A periodic
-            // one-line reminder riding on a tool result fixes it cheaply.
-            const plan = this.toolCtx.plan;
-            if (call.name === "plan") {
-              sincePlanUpdate = 0;
-              if (!output.startsWith("Error") && ["set", "done", "add"].includes(String(call.args?.action))) this.planNudged = false;
-            } else if (plan.exists && plan.currentIndex >= 0 && ++sincePlanUpdate >= 4) {
-              sincePlanUpdate = 0;
-              const cur = plan.steps[plan.currentIndex];
-              output += `\n[Reminder: the plan still shows step ${plan.currentIndex + 1} "${cur.text}" as current. If you have finished steps, mark each with plan {"action": "done"} now.]`;
-            } else if (!plan.exists && this.mode !== "plan" && !this.planCreateNudged && toolCallsThisTurn >= 6) {
-              // The model is clearly on a multi-step task but never created a
-              // plan. One reminder only; any plan call disarms it for the turn.
-              this.planCreateNudged = true;
-              output += `\n[Reminder: this task spans several steps and no plan is set. Create a short plan of runnable increments now with plan {"action": "set", "steps": "wire the entry point\\nrun the build\\ntest it"} so progress survives compaction.]`;
+            // Decomposition gate: in an interactive session an unplanned,
+            // already-underway model must set a plan before it edits files.
+            const gate = this.planGate(call.name, toolCallsThisTurn);
+            if (gate) {
+              output = gate;
+            } else {
+              if (call.name === "run_command") {
+                let end = this.messages.length - 1;
+                while (this.messages[end]?.role === "tool") end--;
+                this.ctxMgr.prepareBackground(this.messages.slice(0, end), this.tools, this.provider, this.compactState());
+              }
+              output = await this.gateAndExecute(call.name, call.args, signal);
+              observedOutput = output; // fingerprint real evidence before coaching/reminders
+              toolCallsThisTurn++;
+              stats.toolCalls++;
+              // Tier-0 context hygiene: a full overwrite makes every earlier
+              // read of that file wrong. Stub them out right away.
+              if ((call.name === "write_file" || call.name === "edit_file") && !output.startsWith("Error") && typeof call.args?.path === "string") {
+                wroteThisTurn = true;
+                this.ctxMgr.evictStaleReads(this.messages, call.args.path);
+                repeatedReads.clear();
+                readsSinceAction = 0;
+              }
+              // Keep the plan honest: small models forget to mark steps done
+              // mid-flow, leaving the checklist stale for minutes. A periodic
+              // one-line reminder riding on a tool result fixes it cheaply.
+              const plan = this.toolCtx.plan;
+              if (call.name === "plan") {
+                sincePlanUpdate = 0;
+                if (!output.startsWith("Error") && ["set", "done", "add"].includes(String(call.args?.action))) this.planNudged = false;
+              } else if (plan.exists && plan.currentIndex >= 0 && ++sincePlanUpdate >= 4) {
+                sincePlanUpdate = 0;
+                const cur = plan.steps[plan.currentIndex];
+                output += `\n[Reminder: the plan still shows step ${plan.currentIndex + 1} "${cur.text}" as current. If you have finished steps, mark each with plan {"action": "done"} now.]`;
+              } else if (!plan.exists && this.mode !== "plan" && !this.planCreateNudged && toolCallsThisTurn >= 6) {
+                // The model is clearly on a multi-step task but never created a
+                // plan. One reminder only; any plan call disarms it for the turn.
+                this.planCreateNudged = true;
+                output += `\n[Reminder: this task spans several steps and no plan is set. Create a short plan of runnable increments now with plan {"action": "set", "steps": "wire the entry point\\nrun the build\\ntest it"} so progress survives compaction.]`;
+              }
             }
           }
 
@@ -721,6 +746,28 @@ export class Agent {
       this.ui.status(`· loaded model context changed to ${actual.toLocaleString()} tokens; budget adjusted`);
       await this.bus.emit("context_update");
     }
+  }
+
+  /**
+   * Decomposition gate. In an interactive session, once the model has started
+   * working (a few tool calls in) it may not change files until it has set a
+   * plan — a protocol invariant, not a prompt suggestion. Returns a coaching
+   * error to send back instead of executing the call, or null to let it run.
+   *
+   * Headless runs are deliberately exempt: there the caller's acceptance
+   * command (--verify) is the contract, and forcing a plan mid-repair can only
+   * derail it. The block is also capped so a model that refuses to plan cannot
+   * lock itself out of the work.
+   */
+  private planGate(toolName: string, toolCallsThisTurn: number): string | null {
+    if (!this.interactive || this.mode === "plan") return null;
+    if (toolName !== "write_file" && toolName !== "edit_file") return null;
+    if (this.toolCtx.plan.exists) return null;
+    if (toolCallsThisTurn < PLAN_GATE_MIN_CALLS) return null;
+    if (this.planGateBlocks >= PLAN_GATE_MAX_BLOCKS) return null;
+    this.planGateBlocks++;
+    this.ui.status("· no plan set — asking for a short plan before editing");
+    return PLAN_GATE_MESSAGE;
   }
 
   private async gateAndExecute(

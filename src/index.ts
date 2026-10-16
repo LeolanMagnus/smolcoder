@@ -60,6 +60,14 @@ interface CliArgs {
   version?: boolean;
 }
 
+/** Parse a --ctx value: plain tokens ("65536") or a k suffix ("64k", "128k").
+ * Returns NaN for anything else so the caller can reject it. */
+function parseCtxValue(raw: string | undefined): number {
+  const m = (raw ?? "").trim().toLowerCase().match(/^(\d+)(k)?$/);
+  if (!m) return NaN;
+  return Number(m[1]) * (m[2] ? 1024 : 1);
+}
+
 function parseArgs(argv: string[]): CliArgs {
   const args: CliArgs = { workspace: process.cwd() };
   for (let i = 0; i < argv.length; i++) {
@@ -80,9 +88,9 @@ function parseArgs(argv: string[]): CliArgs {
     } else if (a === "--bypass" || a === "--bypass-permissions" || a === "--yolo") args.mode = "auto";
     else if (a === "--model") args.model = argv[++i];
     else if (a === "--ctx") {
-      args.ctx = Number(argv[++i]);
+      args.ctx = parseCtxValue(argv[++i]);
       if (!Number.isSafeInteger(args.ctx) || args.ctx < 1024) {
-        console.error("--ctx must be a whole number of at least 1024 tokens.");
+        console.error("--ctx must be a whole number of at least 1024 tokens (a 64k / 128k suffix is accepted).");
         process.exit(1);
       }
     }
@@ -131,7 +139,7 @@ ${c.bold("Options:")}
                                anything reaching outside it asks y/n. auto: no
                                approvals at all.
   --model <name>               pick a model by (partial) name
-  --ctx <tokens>               force a context window (Ollama: sends num_ctx)
+  --ctx <tokens>               force a context window (Ollama: sends num_ctx). Accepts 65536 or 64k
   --verify <command>           headless acceptance gate; automatically repair failures
   --verify-attempts <count>     maximum acceptance checks (default 6; requires --verify)
   --effort <level>             reasoning effort: off, low, medium, high, default

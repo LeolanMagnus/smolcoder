@@ -50,7 +50,7 @@ export function normalizeMode(value: unknown, fallback: Mode = "build"): Mode {
   }
 }
 
-const TOOL_RESULT_CAP = 10000; // chars — final safety net over per-tool caps
+const TOOL_RESULT_CAP = 10000; // chars — fallback safety net when the context manager sets no per-request cap
 
 export function buildToolSpecs(mode: Mode): ToolSpec[] {
   const read: ToolSpec[] = [
@@ -272,7 +272,7 @@ export async function executeTool(
       default:
         return `Error: unknown tool "${name}". Available tools are listed in your tool definitions — use one of those.`;
     }
-    return truncateMiddle(result, TOOL_RESULT_CAP);
+    return truncateMiddle(result, ctx.resultCharLimit ?? TOOL_RESULT_CAP);
   } catch (err: any) {
     if (err instanceof SandboxError) return `Error: ${err.message}`;
     return `Error: ${err?.message ?? String(err)}`;

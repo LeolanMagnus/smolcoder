@@ -264,6 +264,18 @@ test("renderForDigest keeps the end of the log and hides file bodies", () => {
   assert.match(out, /<5000 chars>/);
 });
 
+test("the tool-result cap scales with the window instead of wasting a large context", () => {
+  const small = new ContextManager(4096, 1024);
+  const large = new ContextManager(65536, 8192);
+  // Small windows keep the old, conservative cap.
+  assert.equal(small.toolResultCharLimit(), Math.floor(small.usableWindow() * 0.4));
+  // A 64k window is allowed far more than the old fixed 10k ceiling...
+  assert.ok(large.toolResultCharLimit() > 10000, `got ${large.toolResultCharLimit()}`);
+  // ...but the cap stays bounded.
+  assert.ok(large.toolResultCharLimit() <= 48000);
+  assert.ok(large.toolResultCharLimit() > small.toolResultCharLimit());
+});
+
 test("describeStats formats a compact speed readout", () => {
   assert.equal(describeStats({ modelCalls: 3, toolCalls: 2, generatedTokens: 4100, genSeconds: 34.7, thinkingChars: 0, promptTokensLast: 0, durationMs: 0 }), " · 2 tools · 4.1k tok @ 118 tok/s");
   assert.equal(describeStats({ modelCalls: 1, toolCalls: 0, generatedTokens: 0, genSeconds: 0, thinkingChars: 0, promptTokensLast: 0, durationMs: 0 }), "");
