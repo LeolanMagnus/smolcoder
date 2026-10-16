@@ -190,3 +190,55 @@ test("tui: replayConversation clears the screen and rebuilds a resumed transcrip
   assert.doesNotMatch(fresh, /add a score counter/, "a new session starts empty");
   capture(() => tui.close());
 });
+
+test("tui: the approval prompt is a menu — arrows move, enter confirms, esc denies", async () => {
+  const tui = new Tui();
+  let p;
+  const frame = capture(() => {
+    tui.start();
+    p = tui.confirmCommand("rm -rf /tmp/x", "reaches outside the workspace");
+  });
+  assert.match(frame, /run\? rm -rf \/tmp\/x/, "the command is shown");
+  assert.match(frame, /reaches outside the workspace/, "so is the reason");
+  assert.match(frame, /Yes\s+run this command once/, "first option");
+  assert.match(frame, /Always allow 'rm'\s+for this session/, "second option names the program");
+  assert.match(frame, /No\s+refuse and tell the model/, "third option");
+  assert.match(frame, /↑↓ choose · enter confirm · esc deny/, "the keys are advertised");
+
+  // Down moves the highlight; enter picks whatever is highlighted.
+  capture(() => keys(DOWN));
+  capture(() => keys("\r"));
+  assert.equal(await p, "always", "the second row resolves to always");
+
+  // The highlight starts on "yes": enter alone runs the command once.
+  capture(() => {
+    p = tui.confirmCommand("ls /root");
+    keys("\r");
+  });
+  assert.equal(await p, "yes");
+
+  capture(() => {
+    p = tui.confirmCommand("ls /root");
+    keys("\x1b");
+  });
+  assert.equal(await p, "no", "esc denies");
+  capture(() => {
+    p = tui.confirmCommand("ls /root");
+    keys("\x03");
+  });
+  assert.equal(await p, "no", "ctrl+c denies");
+
+  // Direct letter and number shortcuts still work.
+  capture(() => {
+    p = tui.confirmCommand("ls");
+    keys("y");
+  });
+  assert.equal(await p, "yes");
+  capture(() => {
+    p = tui.confirmCommand("ls");
+    keys("2");
+    keys("\r");
+  });
+  assert.equal(await p, "always", "number keys jump to a row, enter confirms it");
+  capture(() => tui.close());
+});

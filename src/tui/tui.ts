@@ -106,6 +106,8 @@ export class Tui implements SessionUI {
   private confirmState: {
     command: string;
     reason?: string;
+    /** Selected menu row: 0 yes · 1 always · 2 no. */
+    index: number;
     resolve: (r: "yes" | "no" | "always") => void;
   } | null = null;
   private spinnerTimer: NodeJS.Timeout | null = null;
@@ -211,7 +213,7 @@ export class Tui implements SessionUI {
     this.stopProgress();
     this.state = "confirm";
     return new Promise((resolve) => {
-      this.confirmState = { command, reason, resolve };
+      this.confirmState = { command, reason, index: 0, resolve };
       this.render();
     });
   }
@@ -573,15 +575,38 @@ export class Tui implements SessionUI {
 
   private keyConfirm(key: Key): void {
     const cs = this.confirmState!;
+    const results: ("yes" | "always" | "no")[] = ["yes", "always", "no"];
     let result: "yes" | "no" | "always" | null = null;
-    if (key.type === "char") {
-      const ch = key.text!.toLowerCase();
-      if (ch === "y") result = "yes";
-      else if (ch === "n") result = "no";
-      else if (ch === "a") result = "always";
-    } else if (key.type === "enter") result = "yes";
-    else if (key.type === "esc" || key.type === "ctrlc") result = "no";
-    if (result === null) return;
+    switch (key.type) {
+      case "up":
+        cs.index = (cs.index + results.length - 1) % results.length;
+        break;
+      case "down":
+      case "tab":
+        cs.index = (cs.index + 1) % results.length;
+        break;
+      case "enter":
+        result = results[cs.index];
+        break;
+      case "esc":
+      case "ctrlc":
+        result = "no";
+        break;
+      case "char": {
+        const ch = key.text!.toLowerCase();
+        if (ch === "y") result = "yes";
+        else if (ch === "n") result = "no";
+        else if (ch === "a") result = "always";
+        else if (ch >= "1" && ch <= "3") cs.index = Number(ch) - 1;
+        break;
+      }
+      default:
+        break;
+    }
+    if (result === null) {
+      this.render();
+      return;
+    }
     this.confirmState = null;
     this.state = "hidden";
     this.transcript.add({
@@ -699,12 +724,26 @@ export class Tui implements SessionUI {
         lines.push(boxRow(p.ed.buffer.slice(from, from + pw - 2), pw));
       }
     } else if (this.state === "confirm" && this.confirmState) {
-      lines.push(BAR + c.yellow("run? ") + c.bold(this.confirmState.command.slice(0, w - 8)));
-      if (this.confirmState.reason) lines.push("  " + c.dim(this.confirmState.reason));
-      const program = this.confirmState.command.trim().split(/\s+/)[0];
-      lines.push(
-        "  " + c.dim(`[y]es · [n]o · [a]lways allow '${program}' this session`)
-      );
+      const cs = this.confirmState;
+      const program = cs.command.trim().split(/\s+/)[0];
+      lines.push(BAR + c.yellow("run? ") + c.bold(cs.command.slice(0, w - 8)));
+      if (cs.reason) lines.push("  " + c.dim(cs.reason));
+      const options: { label: string; hint: string }[] = [
+        { label: "Yes", hint: "run this command once" },
+        { label: `Always allow '${program}'`, hint: "for this session" },
+        { label: "No", hint: "refuse and tell the model" },
+      ];
+      const plainWidth = Math.min(w, 64);
+      for (let i = 0; i < options.length; i++) {
+        const o = options[i];
+        const plain = ` ${o.label}  ${o.hint}`.slice(0, plainWidth).padEnd(plainWidth);
+        lines.push(
+          i === cs.index
+            ? `${this.selBar()}${plain}${RESET}`
+            : ` ${c.bold(o.label)}  ${c.dim(o.hint)}`
+        );
+      }
+      lines.push("  " + c.dim("↑↓ choose · enter confirm · esc deny"));
     }
     return { lines, curRow, curCol };
   }
