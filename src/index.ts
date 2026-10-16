@@ -144,7 +144,7 @@ ${c.bold("Options:")}
   -v, --version                version
 
 ${c.bold("Keys:")}
-  shift+tab   cycle mode (plan → build → auto)
+  shift+tab   cycle mode (plan → build → auto), also mid-run
   /           slash commands (autocomplete menu)
   click       expand/collapse a tool call or the plan checklist
   esc         cancel a running turn · clear the input

@@ -312,7 +312,8 @@ function renderState(v) {
   if (!s.mode) { st.textContent = "starting…"; renderCrumb(); return; }
   const command = (name) => post("/msg", { sid: v.sid, text: "/" + name });
   const mode = el("button", "statusbtn mode " + s.mode, s.mode === "plan" ? "Plan" : s.mode === "auto" ? "Auto" : "Build");
-  mode.title = "Mode"; mode.onclick = () => command("mode");
+  mode.title = "Mode — switch anytime, including mid-run (shift+Tab cycles)";
+  mode.onclick = () => post("/mode", { sid: v.sid, arg: "" });
   st.appendChild(mode);
   const model = el("button", "statusbtn modelpick", s.model + (s.host ? " @ " + s.host : "") + " ▾"); model.title = s.backend + (s.host ? " on " + s.host : "") + " · Switch model or find models on another machine"; model.onclick = () => command("models"); st.appendChild(model);
   const effort = el("button", "statusbtn eff", s.effort || "Auto"); effort.title = "Reasoning effort"; effort.onclick = () => command("effort"); st.appendChild(effort);

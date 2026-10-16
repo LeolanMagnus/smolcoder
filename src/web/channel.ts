@@ -31,6 +31,7 @@ export class SessionChannel implements SessionUI {
   getState: () => Record<string, any> = () => ({});
   hintLeft = "";
   onModeCycle: (() => void) | null = null;
+  onModeSet: ((arg: string) => void) | null = null;
   onCancel: (() => void) | null = null;
   onExit: (() => void) | null = null;
 

@@ -39,7 +39,7 @@ Type what you want done and press enter. The agent reads files, edits them and r
 | Key | What it does |
 |---|---|
 | `/` | Opens the command menu |
-| `shift+tab` | Cycles the mode: plan, build, auto |
+| `shift+tab` | Cycles the mode: plan, build, auto — works while the agent is running |
 | `click` | Expands or collapses a tool call or the plan checklist |
 | `esc` | Cancels the running turn, or clears the input |
 | `ctrl+c` twice | Quits |
@@ -51,7 +51,7 @@ The line under the input shows the mode, the model, the reasoning effort, how fu
 | Command | What it does |
 |---|---|
 | `/models` | Switch model, or add models from other machines |
-| `/mode` | Set the mode (`plan`, `build`, `auto`) |
+| `/mode` | Set the mode (`plan`, `build`, `auto`). Takes effect at once, even mid-run |
 | `/effort` | Set reasoning effort (`off`, `low`, `medium`, `high`, `default`) |
 | `/plan` | Show the agent's checklist |
 | `/context` | Show context window usage |

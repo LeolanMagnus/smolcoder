@@ -149,6 +149,17 @@ export function fmtTokens(n: number): string {
   return n < 1000 ? String(n) : (n / 1000).toFixed(1) + "k";
 }
 
+/** Mode names and their aliases, as accepted by `/mode <name>`. Returns null
+ * for an unknown name so the caller can fall back to the picker or a hint. */
+export function resolveModeName(arg: string): Mode | null {
+  const aliases: Record<string, Mode> = {
+    plan: "plan", ro: "plan", "read-only": "plan", readonly: "plan",
+    build: "build", edit: "build", write: "build", e: "build", w: "build",
+    auto: "auto", bypass: "auto", "bypass-permissions": "auto", yolo: "auto", b: "auto", y: "auto",
+  };
+  return aliases[arg.trim().toLowerCase()] ?? null;
+}
+
 function modeColored(mode: Mode): string {
   const label = MODE_LABELS[mode];
   if (mode === "auto") return c.red(c.bold(label));
@@ -412,12 +423,8 @@ export class Session {
     ui.slashCommands = SLASH_COMMANDS;
     ui.hintLeft = workspace.replace(os.homedir(), "~");
     ui.getStatus = () => this.statusLine();
-    ui.onModeCycle = () => {
-      const next = MODE_ORDER[(MODE_ORDER.indexOf(this.agent.mode) + 1) % MODE_ORDER.length];
-      this.agent.setMode(next, this.sysPrompt(next));
-      this.persist();
-      this.saveSession();
-    };
+    ui.onModeCycle = () => this.applyModeNow();
+    ui.onModeSet = (arg) => this.applyModeNow(arg);
     ui.onCancel = () => this.agent.cancel();
     ui.onExit = () => void this.shutdown();
     reportCompactions(this.bus, ui);
@@ -768,39 +775,58 @@ export class Session {
     this.ctxMgr.setWindow(next.contextWindow, p.maxOutputTokens);
   }
 
-  private async setMode(arg?: string): Promise<void> {
-    const { ui, agent } = this;
-    const v = (arg ?? "").toLowerCase();
-    const aliases: Record<string, Mode> = {
-      plan: "plan", ro: "plan", "read-only": "plan", readonly: "plan",
-      build: "build", edit: "build", write: "build", e: "build", w: "build",
-      auto: "auto", bypass: "auto", "bypass-permissions": "auto", yolo: "auto", b: "auto", y: "auto",
-    };
-    let next: Mode | undefined = arg ? aliases[v] : undefined;
+  /** Immediate mode switch, safe while a turn is running: the agent rechecks
+   * the mode before every tool call, so `/mode <name>` typed mid-run or the Tab
+   * cycle takes effect from the next action without stopping the run. No
+   * argument means "cycle" (used by Tab) rather than opening the picker. */
+  applyModeNow(arg?: string): void {
+    const next = arg ? resolveModeName(arg) : this.nextMode();
     if (!next) {
-      const idx = await ui.select("Select mode", [
-        {
-          label: "plan",
-          hint: "research and design only; read and search files, change nothing",
-          current: agent.mode === "plan",
-        },
-        {
-          label: "build",
-          hint: "edit files; run commands inside the workspace, ask y/n for anything outside it",
-          current: agent.mode === "build",
-        },
-        {
-          label: "auto",
-          hint: "full access, never asks for approval",
-          current: agent.mode === "auto",
-        },
-      ]);
-      if (idx === null) return;
-      next = MODE_ORDER[idx];
+      this.ui.status(`· unknown mode '${arg}' — use plan, build or auto`);
+      return;
     }
-    agent.setMode(next, this.sysPrompt(next));
+    this.applyMode(next);
+  }
+
+  private nextMode(): Mode {
+    return MODE_ORDER[(MODE_ORDER.indexOf(this.agent.mode) + 1) % MODE_ORDER.length];
+  }
+
+  private applyMode(next: Mode): void {
+    const changed = next !== this.agent.mode;
+    this.agent.setMode(next, this.sysPrompt(next));
+    this.ui.status(changed ? `· mode → ${MODE_LABELS[next]}` : `· already in ${MODE_LABELS[next]} mode`);
     this.persist();
     this.saveSession();
+  }
+
+  private async setMode(arg?: string): Promise<void> {
+    // Unknown or missing name falls through to the picker (idle-only path).
+    const next = arg ? resolveModeName(arg) : await this.pickMode();
+    if (!next) return;
+    this.applyMode(next);
+  }
+
+  private async pickMode(): Promise<Mode | null> {
+    const agent = this.agent;
+    const idx = await this.ui.select("Select mode", [
+      {
+        label: "plan",
+        hint: "research and design only; read and search files, change nothing",
+        current: agent.mode === "plan",
+      },
+      {
+        label: "build",
+        hint: "edit files; run commands inside the workspace, ask y/n for anything outside it",
+        current: agent.mode === "build",
+      },
+      {
+        label: "auto",
+        hint: "full access, never asks for approval",
+        current: agent.mode === "auto",
+      },
+    ]);
+    return idx === null ? null : MODE_ORDER[idx];
   }
 
   private async setEffort(arg?: string): Promise<void> {

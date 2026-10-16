@@ -191,6 +191,31 @@ test("tui: replayConversation clears the screen and rebuilds a resumed transcrip
   capture(() => tui.close());
 });
 
+test("tui: shift+Tab and a /mode line switch mode mid-run instead of queueing", () => {
+  const tui = new Tui();
+  let cycles = 0;
+  let setArg = "unset";
+  tui.onModeCycle = () => cycles++;
+  tui.onModeSet = (arg) => { setArg = arg; };
+  tui.start();
+  capture(() => tui.readInput());
+  capture(() => keys("hello\r")); // submit a turn: the agent is now running
+
+  const tabbed = capture(() => keys("\x1b[Z")); // shift+Tab
+  assert.equal(cycles, 1, "shift+Tab cycles the mode while the agent runs");
+  assert.match(tabbed, /hello/, "the running transcript is still on screen");
+
+  const typed = capture(() => keys("/mode auto\r"));
+  assert.equal(setArg, "auto", "a /mode line is applied at once, not after the turn");
+  const bare = capture(() => keys("/mode\r"));
+  assert.equal(setArg, "", "a bare /mode cycles (the callback receives an empty name)");
+
+  // An ordinary message typed mid-run is still queued for after the turn.
+  capture(() => keys("later\r"));
+  assert.deepEqual(tui.inputQueue, ["later"]);
+  capture(() => tui.close());
+});
+
 test("tui: the approval prompt is a menu — arrows move, enter confirms, esc denies", async () => {
   const tui = new Tui();
   let p;

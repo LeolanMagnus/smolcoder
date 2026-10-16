@@ -245,3 +245,52 @@ test("auto mode never asks", async () => {
   const toolMsg = provider.seen[1].find((m) => m.role === "tool");
   assert.match(toolMsg.content, /nothing-is-read/);
 });
+
+test("a mid-turn switch to auto drops the approval gate and is announced to the model", async () => {
+  const ws = fs.mkdtempSync(path.join(os.tmpdir(), "tc-agent-"));
+  const toolCtx = { workspace: ws, taskManager: new TaskManager(ws), plan: new Plan(), filesTouched: new Set(), commandsRun: [] };
+  const ui = fakeUi();
+  let asked = 0;
+  ui.confirmCommand = async () => { asked++; return "no"; };
+  const seen = [];
+  let agent;
+  const provider = {
+    label: "fake", modelId: "fake", contextWindow: 8000, maxOutputTokens: 2000,
+    setEffort() {}, effortLabel() { return null; },
+    async chat(messages) {
+      seen.push(messages.map((m) => m.content).join("\n"));
+      if (seen.length === 1) {
+        agent.setMode("auto", "auto sys"); // the user switches on the fly
+        return { content: "", toolCalls: [{ id: "c1", name: "run_command", args: { command: "echo ~/mode-probe" } }], generatedTokens: 1, promptTokens: 1, completionTokens: 1 };
+      }
+      return { content: "done", toolCalls: [], generatedTokens: 1, promptTokens: 1, completionTokens: 1 };
+    },
+  };
+  agent = new Agent(provider, "build", "sys", toolCtx, new ContextManager(8000, 2000), new EventBus(), ui, true, 20);
+  await agent.runTurn("go");
+  assert.equal(asked, 0, "auto mode runs the outside command without asking");
+  assert.match(seen[1], /Mode changed to auto/, "the model is told about the switch");
+});
+
+test("a mid-turn switch to plan skips acceptance instead of failing the turn", async () => {
+  const ws = fs.mkdtempSync(path.join(os.tmpdir(), "tc-agent-"));
+  const toolCtx = { workspace: ws, taskManager: new TaskManager(ws), plan: new Plan(), filesTouched: new Set(), commandsRun: [] };
+  fs.writeFileSync(path.join(ws, "a.txt"), "hello");
+  let agent;
+  let calls = 0;
+  const provider = {
+    label: "fake", modelId: "fake", contextWindow: 8000, maxOutputTokens: 2000,
+    setEffort() {}, effortLabel() { return null; },
+    async chat() {
+      if (++calls === 1) {
+        agent.setMode("plan", "plan sys"); // the user downgrades mid-run
+        return { content: "", toolCalls: [{ id: "c1", name: "read_file", args: { path: "a.txt" } }], generatedTokens: 1, promptTokens: 1, completionTokens: 1 };
+      }
+      return { content: "here is the plan; no changes were made", toolCalls: [], generatedTokens: 1, promptTokens: 1, completionTokens: 1 };
+    },
+  };
+  agent = new Agent(provider, "build", "sys", toolCtx, new ContextManager(8000, 2000), new EventBus(), fakeUi(), true, 20, { command: 'node -e "process.exit(1)"' });
+  await agent.runTurn("go");
+  assert.equal(agent.outcome, "completed", "the plan-mode turn finishes instead of throwing");
+  assert.equal(agent.lastError, null);
+});

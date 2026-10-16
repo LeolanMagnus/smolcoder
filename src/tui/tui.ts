@@ -44,6 +44,7 @@ export class Tui implements SessionUI {
   slashCommands: SlashCommand[] = [];
   getStatus: () => string = () => "";
   onModeCycle: (() => void) | null = null;
+  onModeSet: ((arg: string) => void) | null = null;
   onCancel: (() => void) | null = null;
   onExit: (() => void) | null = null;
   placeholder = "Describe a change…   / commands";
@@ -426,6 +427,18 @@ export class Tui implements SessionUI {
       case "enter": {
         const text = ed.buffer.trim();
         if (text) {
+          // A /mode line switches right away instead of waiting for the turn to
+          // end — the agent rechecks the mode before every tool call, so the
+          // queue is the wrong place for it.
+          const mode = /^\/mode(?:\s+(.*))?$/.exec(text);
+          if (mode) {
+            ed.clear();
+            this.onModeSet?.((mode[1] ?? "").trim());
+            this.transcript.add({ kind: "line", text: "", tone: "status" });
+            this.transcript.add({ kind: "user", text });
+            this.notice = null;
+            break;
+          }
           ed.clear();
           this.inputQueue.push(text);
           this.transcript.add({ kind: "line", text: "", tone: "status" });
@@ -434,6 +447,9 @@ export class Tui implements SessionUI {
         }
         break;
       }
+      case "shifttab":
+        this.onModeCycle?.();
+        break;
       case "esc":
         if (ed.buffer.length > 0) ed.clear();
         else this.onCancel?.();

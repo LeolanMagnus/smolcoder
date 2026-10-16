@@ -900,6 +900,16 @@ export class WebHub {
         l.channel.refresh();
         return {};
       }
+      case "/mode": {
+        const l = live();
+        const arg = String(d.arg ?? "");
+        // Idle: the picker (same as typing /mode). Busy: apply on the fly — the
+        // agent rechecks the mode before every tool call, so nothing must stop.
+        if (l.channel.phase === "idle") l.channel.handleMessage(`/mode${arg ? " " + arg : ""}`);
+        else l.channel.onModeSet?.(arg);
+        l.channel.refresh();
+        return {};
+      }
       case "/cancel":
         live().channel.cancel();
         return {};

@@ -54,6 +54,8 @@ export interface SessionUI extends AgentUI {
   getStatus: () => string;
   hintLeft: string;
   onModeCycle: (() => void) | null;
+  /** Switch mode on the fly; arg names the mode, empty cycles (used mid-run). */
+  onModeSet: ((arg: string) => void) | null;
   onCancel: (() => void) | null;
   onExit: (() => void) | null;
   start(): void;
