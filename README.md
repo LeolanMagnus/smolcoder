@@ -58,6 +58,7 @@ The line under the input shows the mode, the model, the reasoning effort, how fu
 | `/compact` | Compact the conversation now |
 | `/tasks`, `/logs <id>`, `/stop <id>` | Inspect and stop background tasks such as dev servers |
 | `/sessions` | Switch between saved sessions, or start/rename/delete one |
+| `/statistic` | Total tokens spent on this project across all its sessions |
 | `/clear` | Start a fresh session |
 | `/help`, `/exit` | Help and quit |
 

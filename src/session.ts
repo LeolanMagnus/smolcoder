@@ -16,7 +16,7 @@ import { buildSystemPrompt, loadAgentsMd } from "./prompt";
 import { LmStudioProvider } from "./providers/lmstudio";
 import { OllamaProvider } from "./providers/ollama";
 import { Effort, Msg, Provider } from "./providers/types";
-import { SessionBody, SessionMeta, SessionStore, workspaceKey } from "./store";
+import { ProjectTokens, SessionBody, SessionMeta, SessionStore, workspaceKey } from "./store";
 import { Mode, MODE_LABELS, MODE_ORDER, normalizeMode, ToolContext } from "./tools/index";
 import { pickShell } from "./tools/shell";
 import { TaskManager } from "./tools/tasks";
@@ -48,6 +48,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: "logs", desc: "Show task output — /logs t1" },
   { name: "stop", desc: "Stop a background task — /stop t1" },
   { name: "sessions", desc: "Switch or manage saved sessions" },
+  { name: "statistic", desc: "Total tokens spent on this project" },
   { name: "clear", desc: "Start a fresh session" },
   { name: "help", desc: "Show help" },
   { name: "exit", desc: "Quit smolcoder (web: close this session)" },
@@ -375,6 +376,10 @@ export class Session {
   /** Host hook: fired after each completed user turn (the web hub names the
    * session after the first one). */
   onTurnDone: (() => void) | null = null;
+  /** Host hook for /statistic: token usage of this workspace's other sessions.
+   * The web hub owns the store, so it provides the numbers; the terminal reads
+   * the store directly. `excludeId` is this session, counted live instead. */
+  usageForWorkspace: ((excludeId: string) => ProjectTokens) | null = null;
 
   private readonly agentsMd: string | null;
   private readonly prefs: SessionPrefs;
@@ -469,6 +474,8 @@ export class Session {
       updatedAt: Date.now(),
       model: this.chosen.id,
       backend: this.chosen.backend,
+      promptTokens: this.agent.lifetimePromptTokens,
+      completionTokens: this.agent.lifetimeCompletionTokens,
     };
     const body: SessionBody = { snapshot: this.snapshot(), events: eventsFromMessages(this.agent.messages) };
     try {
@@ -504,6 +511,7 @@ export class Session {
   /** Reset everything for a brand-new session (a fresh id, no transcript). */
   private newConversation(): void {
     this.agent.resetTranscript();
+    this.agent.resetLifetimeTokens();
     this.toolCtx.plan.reset();
     this.toolCtx.filesTouched.clear();
     this.toolCtx.commandsRun.length = 0;
@@ -688,6 +696,17 @@ export class Session {
             if (this.store) await this.manageSessions();
             else ui.warn("· use the session list in the sidebar to switch sessions");
             break;
+          case "statistic": {
+            const u = this.projectUsage();
+            const total = u.promptTokens + u.completionTokens;
+            ui.status(
+              `Token usage for ${this.workspace.replace(os.homedir(), "~")}\n` +
+                `${u.sessions} session${u.sessions === 1 ? "" : "s"} · ` +
+                `↓${u.promptTokens.toLocaleString()} sent · ↑${u.completionTokens.toLocaleString()} generated · ` +
+                `${total.toLocaleString()} total`
+            );
+            break;
+          }
           default:
             ui.warn(`Unknown command /${cmd} — try /help`);
         }
@@ -864,6 +883,39 @@ export class Session {
 
   // ---- saved sessions (/sessions) -------------------------------------------
 
+  /** Lifetime token spend for this whole project: every saved session for the
+   * workspace plus this one's live (not-yet-saved) totals. */
+  private projectUsage(): ProjectTokens {
+    const live = {
+      sessions: this.hasContent() || this.agent.lifetimePromptTokens || this.agent.lifetimeCompletionTokens ? 1 : 0,
+      promptTokens: this.agent.lifetimePromptTokens,
+      completionTokens: this.agent.lifetimeCompletionTokens,
+    };
+    let stored: ProjectTokens;
+    if (this.store) {
+      const key = workspaceKey(this.workspace);
+      let promptTokens = 0;
+      let completionTokens = 0;
+      let sessions = 0;
+      for (const m of this.store.listMetas()) {
+        if (workspaceKey(m.workspace) !== key || m.id === this.id) continue;
+        promptTokens += m.promptTokens ?? 0;
+        completionTokens += m.completionTokens ?? 0;
+        sessions++;
+      }
+      stored = { sessions, promptTokens, completionTokens };
+    } else if (this.usageForWorkspace) {
+      stored = this.usageForWorkspace(this.id);
+    } else {
+      stored = { sessions: 0, promptTokens: 0, completionTokens: 0 };
+    }
+    return {
+      sessions: live.sessions + stored.sessions,
+      promptTokens: live.promptTokens + stored.promptTokens,
+      completionTokens: live.completionTokens + stored.completionTokens,
+    };
+  }
+
   /** The saved sessions for this workspace, newest first. */
   private workspaceMetas(): SessionMeta[] {
     if (!this.store) return [];
@@ -1013,6 +1065,9 @@ export class Session {
     this.createdAt = meta.createdAt || Date.now();
     this.titleByUser = !!meta.title;
     this.titleTries = meta.title ? 99 : 0;
+    // Continue the saved session's token accounting where it left off.
+    this.agent.lifetimePromptTokens = meta.promptTokens ?? 0;
+    this.agent.lifetimeCompletionTokens = meta.completionTokens ?? 0;
     ui.replayConversation?.(agent.messages, this.title);
     if (toolCtx.plan.exists) ui.planUpdated(toolCtx.plan);
     this.persist();

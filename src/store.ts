@@ -19,6 +19,17 @@ export interface SessionMeta {
   updatedAt: number;
   model?: string;
   backend?: string;
+  /** Lifetime tokens for this session, so a project's spend survives restarts.
+   * Absent in sessions saved before token accounting. */
+  promptTokens?: number;
+  completionTokens?: number;
+}
+
+/** Token usage rolled up across the sessions of one workspace. */
+export interface ProjectTokens {
+  sessions: number;
+  promptTokens: number;
+  completionTokens: number;
 }
 
 export interface SessionBody {
@@ -76,6 +87,8 @@ export class SessionStore {
             updatedAt: Number(m.updatedAt) || 0,
             model: m.model,
             backend: m.backend,
+            promptTokens: Number(m.promptTokens) || 0,
+            completionTokens: Number(m.completionTokens) || 0,
           });
         }
       } catch {
@@ -97,6 +110,8 @@ export class SessionStore {
           updatedAt: Number(m.updatedAt) || 0,
           model: m.model,
           backend: m.backend,
+          promptTokens: Number(m.promptTokens) || 0,
+          completionTokens: Number(m.completionTokens) || 0,
         };
       }
     } catch {

@@ -159,6 +159,22 @@ test("turn stats accumulate tokens, speed and tool calls", async () => {
   assert.match(ui.lines.find((l) => l.startsWith("END ")), /1 tool · 250 tok @ 83 tok\/s/);
 });
 
+test("lifetime token counters survive a transcript reset but reset with the session", async () => {
+  const provider = scriptedProvider([{ content: "done", toolCalls: [], promptTokens: 300, completionTokens: 40 }]);
+  const agent = makeAgent(provider, fakeUi());
+  await agent.runTurn("go");
+  assert.equal(agent.totalPromptTokens, 300);
+  assert.equal(agent.lifetimePromptTokens, 300);
+  assert.equal(agent.lifetimeCompletionTokens, 40);
+  agent.resetTranscript();
+  assert.equal(agent.totalPromptTokens, 0, "per-transcript counters clear");
+  assert.equal(agent.lifetimePromptTokens, 300, "lifetime counters survive /clear");
+  assert.equal(agent.lifetimeCompletionTokens, 40);
+  agent.resetLifetimeTokens();
+  assert.equal(agent.lifetimePromptTokens, 0);
+  assert.equal(agent.lifetimeCompletionTokens, 0);
+});
+
 test("a multi-step run with no plan gets one reminder to create one", async () => {
   const reads = Array.from({ length: 6 }, (_, i) => ({
     content: "", toolCalls: [{ id: `r${i}`, name: "read_file", args: { path: `mod${i}.txt` } }],

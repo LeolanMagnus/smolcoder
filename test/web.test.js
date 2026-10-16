@@ -133,7 +133,7 @@ test("channel: the state event carries the busy label so a reconnecting page res
 test("store: session meta/body round trip, listing and delete", async () => {
   const dir = tmpdir("smol-store-");
   const store = new SessionStore(dir);
-  const meta = { id: "ab12", workspace: dir, title: "hello", createdAt: 1, updatedAt: 2, model: "m", backend: "ollama" };
+  const meta = { id: "ab12", workspace: dir, title: "hello", createdAt: 1, updatedAt: 2, model: "m", backend: "ollama", promptTokens: 42, completionTokens: 17 };
   store.saveMeta(meta);
   await store.saveBody("ab12", { snapshot: { messages: [{ role: "user", content: "hi" }], plan: [] }, events: [{ t: "user", s: "hi" }] });
   assert.deepEqual(store.listMetas(), [meta]);
@@ -228,6 +228,7 @@ function fakeFactory(log) {
     const session = {
       chosen: { id: "fake-model", backend: "ollama" },
       workspace,
+      agent: { lifetimePromptTokens: 0, lifetimeCompletionTokens: 0 },
       onExit: null,
       restored: null,
       taskManager: { killAll() {}, runningSummary: () => [], recentUrls: () => ["http://localhost:5173"] },
@@ -243,6 +244,8 @@ function fakeFactory(log) {
           if (input === "/exit") { ui.close(); session.onExit && session.onExit(); return; }
           ui.startSpinner("thinking");
           ui.token("echo: " + input);
+          session.agent.lifetimePromptTokens += 10;
+          session.agent.lifetimeCompletionTokens += 5;
           ui.stopSpinner();
           ui.turnEnd("done");
           if (session.onTurnDone) session.onTurnDone();
@@ -360,7 +363,10 @@ test("hub: sessions start, echo, save, close, resume, delete; workspaces add and
     // saved to disk after the debounce
     const metaFile = path.join(dataDir, "sessions", id + ".meta.json");
     await until(() => fs.existsSync(metaFile) && fs.existsSync(path.join(dataDir, "sessions", id + ".json")), 4000, "save");
-    assert.equal(JSON.parse(fs.readFileSync(metaFile, "utf8")).title, "Hello Session");
+    const savedMeta = JSON.parse(fs.readFileSync(metaFile, "utf8"));
+    assert.equal(savedMeta.title, "Hello Session");
+    assert.ok(savedMeta.promptTokens >= 10, "token totals are persisted to the session meta");
+    assert.ok(savedMeta.completionTokens >= 5);
 
     // close: it stays listed as a stored session
     await request(hub, "POST", "/sessions/close" + k, { id });

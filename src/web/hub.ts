@@ -22,7 +22,7 @@ import { normalizeMode } from "../tools/index";
 import { Attachment, classifyUpload, extOf, MAX_UPLOAD_BYTES, mimeForExt, safeName } from "../attachments";
 import { Event, SessionChannel, uploadUrl } from "./channel";
 import { PAGE_HTML } from "./page";
-import { SessionMeta, SessionStore, WorkspaceStore, workspaceKey } from "../store";
+import { ProjectTokens, SessionMeta, SessionStore, WorkspaceStore, workspaceKey } from "../store";
 import { Terminal } from "./terminal";
 
 export type SessionFactory = (ui: SessionChannel, workspace: string, prefs: SessionPrefs) => Promise<Session>;
@@ -470,7 +470,13 @@ export class WebHub {
       session.onExit = () => this.sessionEnded(live.id);
       session.onTurnDone = () => void this.autoTitle(live);
       live.channel.getState = () => session.state();
+      session.usageForWorkspace = (excludeId) => this.workspaceUsage(live.workspace, excludeId);
       if (restore) session.restore(restore);
+      // Continue the saved session's token accounting where it left off.
+      if (session.agent) {
+        session.agent.lifetimePromptTokens = live.meta.promptTokens ?? 0;
+        session.agent.lifetimeCompletionTokens = live.meta.completionTokens ?? 0;
+      }
       live.meta.model = session.chosen.id;
       live.meta.backend = session.chosen.backend;
       session.announce();
@@ -546,6 +552,10 @@ export class WebHub {
     live.dirty = false;
     try {
       live.meta.title = live.channel.title;
+      if (live.session.agent) {
+        live.meta.promptTokens = live.session.agent.lifetimePromptTokens;
+        live.meta.completionTokens = live.session.agent.lifetimeCompletionTokens;
+      }
       this.metas.set(live.id, live.meta);
       this.store.saveMeta(live.meta);
       await this.store.saveBody(live.id, { snapshot: live.session.snapshot(), events: live.channel.replay });
@@ -563,9 +573,42 @@ export class WebHub {
   private saveSync(live: Live): void {
     if (!live.session) return;
     live.meta.title = live.channel.title;
+    if (live.session.agent) {
+      live.meta.promptTokens = live.session.agent.lifetimePromptTokens;
+      live.meta.completionTokens = live.session.agent.lifetimeCompletionTokens;
+    }
     this.metas.set(live.id, live.meta);
     this.store.saveMeta(live.meta);
     this.store.saveBodySync(live.id, { snapshot: live.session.snapshot(), events: live.channel.replay });
+  }
+
+  /** Stored token usage for a workspace's sessions, excluding one id (which is
+   * reported live by the session itself). Open sessions use their live totals. */
+  private workspaceUsage(workspace: string, excludeId: string): ProjectTokens {
+    const key = workspaceKey(workspace);
+    let promptTokens = 0;
+    let completionTokens = 0;
+    let sessions = 0;
+    const seen = new Set<string>();
+    for (const m of this.metas.values()) {
+      if (workspaceKey(m.workspace) !== key || m.id === excludeId) continue;
+      seen.add(m.id);
+      const live = this.live.get(m.id);
+      promptTokens += live?.session?.agent?.lifetimePromptTokens ?? m.promptTokens ?? 0;
+      completionTokens += live?.session?.agent?.lifetimeCompletionTokens ?? m.completionTokens ?? 0;
+      sessions++;
+    }
+    // A live session is not in `metas` until its first save — count it too.
+    for (const live of this.live.values()) {
+      if (workspaceKey(live.workspace) !== key || live.id === excludeId || seen.has(live.id)) continue;
+      const prompt = live.session?.agent?.lifetimePromptTokens ?? 0;
+      const completion = live.session?.agent?.lifetimeCompletionTokens ?? 0;
+      if (!prompt && !completion) continue;
+      promptTokens += prompt;
+      completionTokens += completion;
+      sessions++;
+    }
+    return { sessions, promptTokens, completionTokens };
   }
 
   // ---- terminals --------------------------------------------------------------

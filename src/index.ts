@@ -156,7 +156,7 @@ ${c.bold("Slash commands:")}
   /effort     reasoning effort     /stop <id>    kill a task
   /context    context usage        /sessions     switch or manage saved sessions
   /compact    compact now          /clear        start a fresh session
-  /exit       quit
+  /statistic  project token usage  /exit         quit
 `;
 
 /** Node fires 'exit' on normal termination but NOT on a killing signal, so
