@@ -518,6 +518,7 @@ export class Session {
         ? ` ${c.dim("·")} ${c.yellow(agent.provider.effortLabel() ?? this.effort ?? "")}`
         : "") +
       ` ${c.dim("·")} ${c.dim(`${fmtTokens(agent.contextTokens())} (${agent.contextPercent()}%)`)}` +
+      ` ${c.dim("·")} ${c.dim(`tok ↓${fmtTokens(agent.totalPromptTokens)} ↑${fmtTokens(agent.totalCompletionTokens)}`)}` +
       (plan.exists
         ? ` ${c.dim("·")} ${
             plan.currentIndex < 0
@@ -542,6 +543,8 @@ export class Session {
       ctxTokens: this.agent.contextTokens(),
       ctxPct: this.agent.contextPercent(),
       context: this.agent.contextBudget(),
+      tokensIn: this.agent.totalPromptTokens,
+      tokensOut: this.agent.totalCompletionTokens,
       outcome: this.agent.outcome,
       lastError: this.agent.lastError,
       plan: plan.exists ? { steps: plan.steps, current: plan.currentIndex } : null,
@@ -659,7 +662,7 @@ export class Session {
           case "context":
             const budget = agent.contextBudget();
             ui.status(
-              `Context ${budget.prompt.toLocaleString()} / ${budget.window.toLocaleString()} tokens (${budget.source})\nReply reserve ${budget.reserve.toLocaleString()} · available ${budget.available.toLocaleString()} · ${agent.messages.length} messages · ${agent.tools.length} tools`
+              `Context ${budget.prompt.toLocaleString()} / ${budget.window.toLocaleString()} tokens (${budget.source})\nReply reserve ${budget.reserve.toLocaleString()} · available ${budget.available.toLocaleString()} · ${agent.messages.length} messages · ${agent.tools.length} tools\nSession tokens: ↓${agent.totalPromptTokens.toLocaleString()} in · ↑${agent.totalCompletionTokens.toLocaleString()} out`
             );
             break;
           case "clear":

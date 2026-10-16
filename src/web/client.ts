@@ -218,6 +218,7 @@ logResize.observe(logwrap); logResize.observe(logsEl); logResize.observe($("busy
 function add(v, e) { v.logEl.appendChild(e); if (v === active) stick(); return e; }
 function fmtSize(n) { return n < 1024 ? n + " B" : n < 1048576 ? (n / 1024).toFixed(n < 10240 ? 1 : 0) + " KB" : (n / 1048576).toFixed(1) + " MB"; }
 function fmtMs(ms) { return ms < 1000 ? Math.round(ms) + "ms" : ms < 60000 ? (ms / 1000).toFixed(1) + "s" : Math.floor(ms / 60000) + "m" + Math.round((ms % 60000) / 1000) + "s"; }
+function fmtTok(n) { return n < 1000 ? String(n) : (n / 1000).toFixed(1) + "k"; }
 // A sent message: its text, then thumbnails for images and links for files.
 function userBubble(m) {
   const d = el("div", "user", m.s || "");
@@ -316,6 +317,9 @@ function renderState(v) {
   const model = el("button", "statusbtn modelpick", s.model + (s.host ? " @ " + s.host : "") + " ▾"); model.title = s.backend + (s.host ? " on " + s.host : "") + " · Switch model or find models on another machine"; model.onclick = () => command("models"); st.appendChild(model);
   const effort = el("button", "statusbtn eff", s.effort || "Auto"); effort.title = "Reasoning effort"; effort.onclick = () => command("effort"); st.appendChild(effort);
   st.appendChild(el("span", "grow"));
+  const tok = el("span", "task-chip", "↓" + fmtTok(s.tokensIn || 0) + " ↑" + fmtTok(s.tokensOut || 0));
+  tok.title = "Session tokens: " + (s.tokensIn || 0).toLocaleString() + " in (prompt) · " + (s.tokensOut || 0).toLocaleString() + " out (generated)";
+  st.appendChild(tok);
   const ctx = el("button", "statusbtn context-chip" + (s.ctxPct >= 75 ? " pressure" : ""));
   const meter = document.createElement("meter"); meter.min = 0; meter.max = 100; meter.value = s.ctxPct || 0; meter.setAttribute("aria-label", "Context used");
   ctx.appendChild(meter); ctx.appendChild(document.createTextNode((s.ctxPct || 0) + "%"));

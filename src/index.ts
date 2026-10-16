@@ -272,6 +272,8 @@ async function runHeadless(args: CliArgs): Promise<void> {
         thinkingTokensEst: Math.round(st.thinkingChars / 4),
         genTokPerSec: st.genSeconds > 0 ? Math.round(st.generatedTokens / st.genSeconds) : null,
         promptTokensLast: st.promptTokensLast,
+        promptTokens: agent.totalPromptTokens,
+        completionTokens: agent.totalCompletionTokens,
         contextWindow: chosen.contextWindow,
         planDone: toolCtx.plan.exists ? `${toolCtx.plan.doneCount}/${toolCtx.plan.steps.length}` : null,
       })}\n`
