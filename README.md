@@ -166,11 +166,32 @@ smolcoder can start [MCP](https://modelcontextprotocol.io) servers over stdio. T
 - When a tool returns an image — a Blender render, a screenshot — it is saved under `.smolcoder/mcp/` in the workspace and attached to the conversation so a vision model can look at the result.
 - On Windows, if `uvx` is not found directly, use `"command": "cmd", "args": ["/c", "uvx", "mcp-for-blender"]`.
 
+## Skills (optional)
+
+A skill is a reusable workflow saved as markdown — a `<name>/SKILL.md` folder with a small frontmatter, the same shape Claude Code uses:
+
+```markdown
+---
+name: retopology
+description: Clean up a sculpted mesh with a retopology pass before UV unwrapping.
+---
+
+1. Inspect the mesh for n-gons and uneven density.
+2. ...
+```
+
+Put skills anywhere smolcoder looks: `.smolcoder/skills/` or `.claude/skills/` in the workspace, or `~/.smolcoder/skills/` and `~/.claude/skills/` for every project. On a name clash the more specific folder wins.
+
+- Every skill's name and description ride in the system prompt (capped, so a small context window stays usable); the full text loads only when the agent needs it, through the `skill` tool.
+- The agent loads a skill automatically when a task matches its description. "Use the retopology skill" also works.
+- The `skill` tool works in plan mode too — skills are read-only instructions.
+- A skill added while a session is running is found without a restart.
+
 ## Why it works well with local models
 
 Local models are free and private, but they give you less to work with. The context window is small, generation is slower, and long instructions get lost. smolcoder is built around those limits.
 
-- **It stays out of the model's way.** A short system prompt and nine simple tools (five in plan mode) leave most of the window for your code. Optional MCP tools join the same set, capped at twelve.
+- **It stays out of the model's way.** A short system prompt and ten simple tools (six in plan mode) leave most of the window for your code. Optional MCP tools join the same set, capped at twelve.
 - **It watches the real window.** It asks the server how much context is actually loaded, shows a meter, and keeps room for the reply. A model that advertises a 128k window is often loaded with 4k, and smolcoder budgets for the 4k.
 - **It tidies up as it goes, not just before the window fills.** Once a large file is written, its body is dropped from the conversation immediately — the code is on disk and can be re-read. Old file reads and command output are cleared next. Only then does it ask the model for a short handover. Your request and the checklist are never summarized away.
 - **It keeps the plan outside the conversation.** The to-do list and the notes for the current step live in smolcoder itself, so they survive any summary. If a long run has no plan, the agent is reminded once to make one; step text is kept short.

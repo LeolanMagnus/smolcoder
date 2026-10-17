@@ -3,7 +3,8 @@
 // the model needs lives in the tool schemas and in coaching error messages.
 // If the workspace has an AGENTS.md, its contents ride along directly after
 // the prompt (size-capped) — and because they are part of message[0], they
-// survive compaction the same way the system prompt does.
+// survive compaction the same way the system prompt does. The compact skills
+// list is appended the same way; the full skill text loads through the tool.
 
 import * as fs from "fs";
 import * as path from "path";
@@ -35,6 +36,8 @@ export function buildSystemPrompt(opts: {
   shellLabel: string;
   /** Contents of the workspace AGENTS.md, when present. */
   agentsMd?: string | null;
+  /** The compact "Available skills" section, when any skill is installed. */
+  skills?: string | null;
 }): string {
   const os =
     process.platform === "win32" ? "Windows" : process.platform === "darwin" ? "macOS" : "Linux";
@@ -56,6 +59,7 @@ export function buildSystemPrompt(opts: {
     `Continue until the request is finished or explain the blocker. Summarize the result and verification briefly.` +
     (opts.agentsMd
       ? `\n\nWorkspace instructions from AGENTS.md — follow these:\n${opts.agentsMd}`
-      : "")
+      : "") +
+    (opts.skills ? `\n\n${opts.skills}` : "")
   );
 }

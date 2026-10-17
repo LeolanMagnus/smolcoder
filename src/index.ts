@@ -18,6 +18,7 @@ import { EventBus } from "./events";
 import { terminalLogo } from "./logo";
 import { Plan } from "./plan";
 import { buildSystemPrompt, loadAgentsMd } from "./prompt";
+import { discoverSkills, renderSkillsPrompt } from "./skills";
 import { Effort } from "./providers/types";
 import {
   effortAdvice,
@@ -245,7 +246,10 @@ async function runHeadless(args: CliArgs): Promise<void> {
   const ctxMgr = new ContextManager(chosen.contextWindow, provider.maxOutputTokens);
   const agentsMd = loadAgentsMd(args.workspace);
   if (agentsMd) ui.status(`· AGENTS.md loaded (${agentsMd.split("\n").length} lines)`);
-  const systemPrompt = buildSystemPrompt({ workspace: args.workspace, mode, shellLabel: shell.label, agentsMd });
+  const skills = discoverSkills(args.workspace);
+  const skillsSection = renderSkillsPrompt(skills);
+  if (skillsSection) ui.status(`· ${skills.length} skill${skills.length === 1 ? "" : "s"} available`);
+  const systemPrompt = buildSystemPrompt({ workspace: args.workspace, mode, shellLabel: shell.label, agentsMd, skills: skillsSection });
   const agent = new Agent(provider, mode, systemPrompt, toolCtx, ctxMgr, bus, ui, false, 1000,
     args.verify ? { command: args.verify, maxAttempts: args.verifyAttempts } : undefined);
   reportCompactions(bus, ui);

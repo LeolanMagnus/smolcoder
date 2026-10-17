@@ -1,4 +1,4 @@
-// Tool registry. Nine built-in tools with flat parameters (no nested objects
+// Tool registry. Ten built-in tools with flat parameters (no nested objects
 // or arrays: small models mangle them), an example call inside every
 // description (small models imitate better than they infer), and the mode
 // decides which schemas are sent. Tools from configured MCP servers join the
@@ -7,6 +7,7 @@
 import { Plan } from "../plan";
 import { ImageRef, ToolSpec } from "../providers/types";
 import { callMcpTool, isMcpTool } from "../mcp";
+import { discoverSkills, listSkillsText, loadSkill } from "../skills";
 import { editFile, listFiles, readFile, writeFile } from "./fs-tools";
 import { syntaxCheck } from "./check";
 import { runCommand } from "./shell";
@@ -121,6 +122,19 @@ export function buildToolSpecs(mode: Mode): ToolSpec[] {
         required: ["action"],
       },
     },
+    {
+      name: "skill",
+      description:
+        'Reusable saved workflows (SKILL.md folders). List them: {"action": "list"}. Load one and follow its instructions step by step: {"action": "load", "name": "retopology"}. When the task matches a skill listed in your instructions, load it before acting.',
+      parameters: {
+        type: "object",
+        properties: {
+          action: { type: "string", enum: ["list", "load"] },
+          name: { type: "string", description: 'Skill name to load (for "load")' },
+        },
+        required: ["action"],
+      },
+    },
   ];
 
   const write: ToolSpec[] = [
@@ -231,6 +245,16 @@ export async function executeTool(
         else if (action === "show") result = ctx.plan.modelView();
         else
           return 'Error: action must be one of "set", "done", "add", "show", "checkpoint". Example: {"action": "done"}';
+        break;
+      }
+      case "skill": {
+        // Fresh discovery on every call: a skill added mid-session is visible
+        // without a restart, and the files stay the single source of truth.
+        const skills = discoverSkills(ctx.workspace);
+        if (args.action === "list") result = listSkillsText(skills);
+        else if (args.action === "load") result = loadSkill(skills, String(args.name ?? ""));
+        else
+          return 'Error: action must be "list" or "load". Example: {"action": "load", "name": "my-skill"}';
         break;
       }
       case "write_file":

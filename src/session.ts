@@ -16,6 +16,7 @@ import { buildSystemPrompt, loadAgentsMd } from "./prompt";
 import { LmStudioProvider } from "./providers/lmstudio";
 import { OllamaProvider } from "./providers/ollama";
 import { Effort, Msg, Provider } from "./providers/types";
+import { discoverSkills, renderSkillsPrompt } from "./skills";
 import { ProjectTokens, SessionBody, SessionMeta, SessionStore, workspaceKey } from "./store";
 import { Mode, MODE_LABELS, MODE_ORDER, normalizeMode, ToolContext } from "./tools/index";
 import { pickShell } from "./tools/shell";
@@ -382,6 +383,8 @@ export class Session {
   usageForWorkspace: ((excludeId: string) => ProjectTokens) | null = null;
 
   private readonly agentsMd: string | null;
+  /** Compact "Available skills" list, discovered once per session. */
+  private readonly skillsSection: string | null;
   private readonly prefs: SessionPrefs;
   private readonly help: string;
   private readonly store?: SessionStore;
@@ -421,6 +424,7 @@ export class Session {
     };
     this.ctxMgr = new ContextManager(chosen.contextWindow, provider.maxOutputTokens);
     this.agentsMd = loadAgentsMd(workspace);
+    this.skillsSection = renderSkillsPrompt(discoverSkills(workspace));
     // The step cap is a runaway-loop backstop, not a work limit — esc/ctrl+c
     // is the user's real kill switch, so set it far above any legitimate task.
     this.agent = new Agent(provider, mode0, this.sysPrompt(mode0), this.toolCtx, this.ctxMgr, this.bus, ui, true, 1000);
@@ -438,7 +442,7 @@ export class Session {
   }
 
   private sysPrompt(mode: Mode): string {
-    return buildSystemPrompt({ workspace: this.workspace, mode, shellLabel: this.shell.label, agentsMd: this.agentsMd });
+    return buildSystemPrompt({ workspace: this.workspace, mode, shellLabel: this.shell.label, agentsMd: this.agentsMd, skills: this.skillsSection });
   }
 
   private persist(): void {
