@@ -36,6 +36,7 @@ interface Pending {
 
 const STDERR_TAIL = 4000;
 const PROTOCOL_VERSION = "2025-06-18";
+const VERSION = require("../../package.json").version as string;
 
 export class McpClient {
   private proc: ChildProcessWithoutNullStreams | null = null;
@@ -83,7 +84,7 @@ export class McpClient {
     // with their own choice in the result; we never gate on it.
     await this.request(
       "initialize",
-      { protocolVersion: PROTOCOL_VERSION, capabilities: {}, clientInfo: { name: "smolcoder", version: "0.17.0" } },
+      { protocolVersion: PROTOCOL_VERSION, capabilities: {}, clientInfo: { name: "smolcoder", version: VERSION } },
       startupTimeoutMs
     );
     this.notify("notifications/initialized", {});
