@@ -42,7 +42,7 @@ function scriptedProvider(replies) {
 
 function makeAgent(provider, ui, mode = "auto", interactive = false) {
   const ws = fs.mkdtempSync(path.join(os.tmpdir(), "tc-agent-"));
-  const toolCtx = { workspace: ws, taskManager: new TaskManager(ws), plan: new Plan(), filesTouched: new Set(), commandsRun: [] };
+  const toolCtx = { workspace: ws, taskManager: new TaskManager(ws), plan: new Plan(), filesTouched: new Set(), commandsRun: [], skillsLoaded: new Set() };
   return new Agent(provider, mode, "sys", toolCtx, new ContextManager(8000, 2000), new EventBus(), ui, interactive, 20);
 }
 
@@ -317,7 +317,7 @@ test("auto mode never asks", async () => {
 
 test("a mid-turn switch to auto drops the approval gate and is announced to the model", async () => {
   const ws = fs.mkdtempSync(path.join(os.tmpdir(), "tc-agent-"));
-  const toolCtx = { workspace: ws, taskManager: new TaskManager(ws), plan: new Plan(), filesTouched: new Set(), commandsRun: [] };
+  const toolCtx = { workspace: ws, taskManager: new TaskManager(ws), plan: new Plan(), filesTouched: new Set(), commandsRun: [], skillsLoaded: new Set() };
   const ui = fakeUi();
   let asked = 0;
   ui.confirmCommand = async () => { asked++; return "no"; };
@@ -343,7 +343,7 @@ test("a mid-turn switch to auto drops the approval gate and is announced to the 
 
 test("a mid-turn switch to plan skips acceptance instead of failing the turn", async () => {
   const ws = fs.mkdtempSync(path.join(os.tmpdir(), "tc-agent-"));
-  const toolCtx = { workspace: ws, taskManager: new TaskManager(ws), plan: new Plan(), filesTouched: new Set(), commandsRun: [] };
+  const toolCtx = { workspace: ws, taskManager: new TaskManager(ws), plan: new Plan(), filesTouched: new Set(), commandsRun: [], skillsLoaded: new Set() };
   fs.writeFileSync(path.join(ws, "a.txt"), "hello");
   let agent;
   let calls = 0;

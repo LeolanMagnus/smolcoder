@@ -207,6 +207,8 @@ export interface ToolContext {
   /** Records for the compaction state note. */
   filesTouched: Set<string>;
   commandsRun: string[];
+  /** Names of the skills loaded through the skill tool in this session. */
+  skillsLoaded: Set<string>;
   /** Internal per-request cap; never a model-supplied tool argument. */
   resultCharLimit?: number;
   /** Images returned by MCP tools during the current call. The agent drains
@@ -252,7 +254,7 @@ export async function executeTool(
         // without a restart, and the files stay the single source of truth.
         const skills = discoverSkills(ctx.workspace);
         if (args.action === "list") result = listSkillsText(skills);
-        else if (args.action === "load") result = loadSkill(skills, String(args.name ?? ""));
+        else if (args.action === "load") result = loadSkill(skills, String(args.name ?? ""), ctx.skillsLoaded);
         else
           return 'Error: action must be "list" or "load". Example: {"action": "load", "name": "my-skill"}';
         break;

@@ -330,6 +330,12 @@ function renderState(v) {
     const done = s.plan.steps.filter((x) => x.done).length;
     st.appendChild(el("span", "plan-chip" + (s.plan.current < 0 ? " done" : ""), "plan " + done + "/" + s.plan.steps.length));
   }
+  if (s.skills && s.skills.length) {
+    const names = s.skills.slice(0, 3).join(", ") + (s.skills.length > 3 ? " +" + (s.skills.length - 3) : "");
+    const chip = el("span", "skills-chip", (s.skills.length > 1 ? "skills " : "skill ") + names);
+    chip.title = "Skills loaded this session";
+    st.appendChild(chip);
+  }
   if (s.tasks) st.appendChild(el("span", "task-chip", s.tasks + " running"));
   if (s.outcome === "error" || s.outcome === "cancelled") {
     const paused = el("span", s.outcome === "error" ? "line-warn" : "task-chip", s.outcome === "error" ? "Paused" : "Stopped");

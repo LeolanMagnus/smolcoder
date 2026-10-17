@@ -28,7 +28,7 @@ function writeConfig(server) {
   fs.writeFileSync(CONFIG, JSON.stringify({ mcpServers: { fixture: server } }));
 }
 function freshCtx(workspace) {
-  return { workspace, filesTouched: new Set(), commandsRun: [] };
+  return { workspace, filesTouched: new Set(), commandsRun: [], skillsLoaded: new Set() };
 }
 
 writeConfig(baseServer());
@@ -93,7 +93,7 @@ test("the agent attaches MCP images to the conversation", async () => {
   writeConfig(baseServer());
   mcp.shutdownMcp();
   const ws = fs.mkdtempSync(path.join(os.tmpdir(), "smol-mcp-ws-"));
-  const toolCtx = { workspace: ws, taskManager: new TaskManager(ws), plan: new Plan(), filesTouched: new Set(), commandsRun: [] };
+  const toolCtx = { workspace: ws, taskManager: new TaskManager(ws), plan: new Plan(), filesTouched: new Set(), commandsRun: [], skillsLoaded: new Set() };
   let reply = 0;
   const provider = {
     label: "fake", modelId: "fake", contextWindow: 8000, maxOutputTokens: 2000,

@@ -15,7 +15,7 @@ export const STYLES = String.raw`
   :root {
     --bg: #111416; --fg: #e1e5e7; --dim: #a0a8ae; --gray: #79838b;
     --accent: #35bfd4; --yellow: #e0af68; --red: #f7768e; --green: #9ece6a;
-    --magenta: #bb9af7; --box: #14181a; --sel: #1a7f94; --line: #232a2f; --side: #0e1113;
+    --magenta: #bb9af7; --pink: #ff7eb6; --box: #14181a; --sel: #1a7f94; --line: #232a2f; --side: #0e1113;
     --diff-add: ${DARK_PALETTE.diffAdd}; --diff-del: ${DARK_PALETTE.diffDelete};
     /* The model's reply, one blue-shifted theme for both surfaces. */
     --md-text: ${MARKDOWN.text}; --md-heading: ${MARKDOWN.heading};
@@ -188,6 +188,7 @@ export const STYLES = String.raw`
   #status .mode { font-weight: 700; }
   #status .mode.build { color: var(--accent); } #status .mode.auto { color: var(--red); } #status .mode.plan { color: var(--magenta); }
   #status .eff { color: var(--yellow); } #status .plan-chip { color: var(--accent); } #status .plan-chip.done { color: var(--green); }
+  #status .skills-chip { color: var(--pink); }
   #hintrow { font-size: 12px; color: var(--gray); margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
   /* ---- right panel: browser + terminal tabs ---- */
@@ -327,7 +328,7 @@ export const STYLES = String.raw`
   meter::-webkit-meter-bar { background: #364047; border: none; }
   meter::-webkit-meter-optimum-value { background: #7dabad; }
   meter::-moz-meter-bar { background: #7dabad; }
-  .task-chip, .plan-chip { white-space: nowrap; }
+  .task-chip, .plan-chip, .skills-chip { white-space: nowrap; }
   #busywrap { padding-top: 8px; }
   #busy { font-size: 12px; }
   #panel { background: #101416; }
@@ -364,7 +365,7 @@ export const STYLES = String.raw`
     :root {
       --bg: #ffffff; --fg: #1f2328; --dim: #4d5761; --gray: #6e7781;
       --accent: #0969da; --yellow: #9a6700; --red: #cf222e; --green: #1a7f37;
-      --magenta: #8250df; --box: #f6f8fa; --sel: #cfe3ff; --line: #d8dee4; --side: #f6f8fa;
+      --magenta: #8250df; --pink: #bf3989; --box: #f6f8fa; --sel: #cfe3ff; --line: #d8dee4; --side: #f6f8fa;
       --diff-add: ${LIGHT_PALETTE.diffAdd}; --diff-del: ${LIGHT_PALETTE.diffDelete};
       --md-text: ${LIGHT_MD.text}; --md-heading: ${LIGHT_MD.heading};
       --md-link: ${LIGHT_MD.link}; --md-link-text: ${LIGHT_MD.linkText};

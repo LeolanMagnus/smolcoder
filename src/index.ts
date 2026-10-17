@@ -242,6 +242,7 @@ async function runHeadless(args: CliArgs): Promise<void> {
     plan: new Plan(),
     filesTouched: new Set(),
     commandsRun: [],
+    skillsLoaded: new Set(),
   };
   const ctxMgr = new ContextManager(chosen.contextWindow, provider.maxOutputTokens);
   const agentsMd = loadAgentsMd(args.workspace);

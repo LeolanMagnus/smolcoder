@@ -169,6 +169,15 @@ function modeColored(mode: Mode): string {
   return c.cyan(c.bold(label));
 }
 
+/** The loaded-skills chip's text: canonical names, capped so the rest of a
+ * narrow status row stays visible. Null when nothing is loaded. */
+function skillsLabel(loaded: Set<string>): string | null {
+  if (!loaded.size) return null;
+  const names = [...loaded];
+  const shown = names.slice(0, 3).join(", ") + (names.length > 3 ? ` +${names.length - 3}` : "");
+  return `skill${names.length > 1 ? "s" : ""} ${shown}`;
+}
+
 /** Detect backends, pick a model and resolve its context window. Returns null
  * when no backend answers. `progress` gets a short label for each slow step. */
 export async function prepareModel(
@@ -421,6 +430,7 @@ export class Session {
       plan: new Plan(),
       filesTouched: new Set(),
       commandsRun: [],
+      skillsLoaded: new Set(),
     };
     this.ctxMgr = new ContextManager(chosen.contextWindow, provider.maxOutputTokens);
     this.agentsMd = loadAgentsMd(workspace);
@@ -526,11 +536,12 @@ export class Session {
     this.titleTries = 0;
   }
 
-  /** The TUI's status row: mode · model · effort · context · plan · tasks. */
+  /** The TUI's status row: mode · model · effort · context · plan · skills · tasks. */
   statusLine(): string {
     const agent = this.agent;
     const tasks = this.taskManager.runningSummary().length;
     const plan = this.toolCtx.plan;
+    const skills = skillsLabel(this.toolCtx.skillsLoaded);
     return (
       `${modeColored(agent.mode)} ${c.dim("·")} ${this.chosen.id} ${c.dim(backendLabel(this.chosen))}` +
       (this.effort || agent.provider.effortLabel()
@@ -545,6 +556,7 @@ export class Session {
               : c.cyan(`plan ${plan.doneCount}/${plan.steps.length}`)
           }`
         : "") +
+      (skills ? ` ${c.dim("·")} ${c.pink(skills)}` : "") +
       (tasks ? ` ${c.dim("·")} ${c.green(`${tasks} task${tasks > 1 ? "s" : ""}`)}` : "")
     );
   }
@@ -567,6 +579,7 @@ export class Session {
       outcome: this.agent.outcome,
       lastError: this.agent.lastError,
       plan: plan.exists ? { steps: plan.steps, current: plan.currentIndex } : null,
+      skills: this.toolCtx.skillsLoaded.size ? [...this.toolCtx.skillsLoaded] : null,
       tasks: this.taskManager.runningSummary().length,
       workspace: this.workspace,
       commands: SLASH_COMMANDS,
@@ -615,6 +628,23 @@ export class Session {
       ...(typeof p.note === "string" ? { note: p.note.slice(0, 1000) } : {}) }));
     for (const f of s.filesTouched ?? []) this.toolCtx.filesTouched.add(f);
     this.toolCtx.commandsRun.push(...(s.commandsRun ?? []));
+    this.restoreLoadedSkills();
+  }
+
+  /** Rebuild the loaded-skills set from a restored transcript: a skill load
+   * counts once its result is not an error. */
+  private restoreLoadedSkills(): void {
+    this.toolCtx.skillsLoaded.clear();
+    for (const m of this.agent.messages) {
+      for (const call of m.role === "assistant" ? m.toolCalls ?? [] : []) {
+        const name = typeof call.args?.name === "string" ? call.args.name.trim().toLowerCase() : "";
+        if (call.name !== "skill" || call.args?.action !== "load" || !name) continue;
+        const failed = this.agent.messages.some(
+          (r) => r.role === "tool" && r.toolCallId === call.id && String(r.content ?? "").startsWith("Error")
+        );
+        if (!failed) this.toolCtx.skillsLoaded.add(name);
+      }
+    }
   }
 
   /** The input loop. Returns after /exit (or after the host asked the UI to

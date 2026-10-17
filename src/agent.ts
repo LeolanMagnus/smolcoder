@@ -185,6 +185,7 @@ export class Agent {
     // cleared conversation would assert work the new task never did.
     this.toolCtx.filesTouched.clear();
     this.toolCtx.commandsRun.length = 0;
+    this.toolCtx.skillsLoaded.clear();
     this.ctxMgr.resetAnchor();
   }
 

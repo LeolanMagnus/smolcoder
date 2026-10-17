@@ -40,7 +40,7 @@ const messages = [{ role: 'system', content: 'code' }, { role: 'user', content: 
 const ui = () => ({ token() {}, thinking() {}, toolCall() {}, toolResult() {}, println() {}, status() {}, warn() {}, error() {}, startSpinner() {}, stopSpinner() {}, turnEnd() {}, planUpdated() {}, async confirmCommand() { return 'yes'; } });
 const fake = (fn) => ({ label: 'fake', modelId: 'fake', contextWindow: 8000, maxOutputTokens: 2000, setEffort() {}, effortLabel() { return null; }, chat: fn });
 function agentFor(provider, view = ui(), max = 10) {
-  const ctx = { workspace: process.cwd(), plan: new Plan(), taskManager: { runningSummary() { return []; } }, filesTouched: new Set(), commandsRun: [] };
+  const ctx = { workspace: process.cwd(), plan: new Plan(), taskManager: { runningSummary() { return []; } }, filesTouched: new Set(), commandsRun: [], skillsLoaded: new Set() };
   return new Agent(provider, 'plan', 'sys', ctx, new ContextManager(8000, 2000), new EventBus(), view, false, max);
 }
 
@@ -195,7 +195,7 @@ test('a mode downgrade while approval is pending prevents command execution', as
   const view = ui(); let executions = 0; let a;
   view.confirmCommand = async () => { a.setMode('plan', 'plan mode'); return 'yes'; };
   const p = fake(async () => ({ content: 'done', toolCalls: [] }));
-  const ctx = { workspace: process.cwd(), plan: new Plan(), taskManager: { async startWithEarlyOutput() { executions++; return 'started'; } }, filesTouched: new Set(), commandsRun: [] };
+  const ctx = { workspace: process.cwd(), plan: new Plan(), taskManager: { async startWithEarlyOutput() { executions++; return 'started'; } }, filesTouched: new Set(), commandsRun: [], skillsLoaded: new Set() };
   a = new Agent(p, 'build', 'sys', ctx, new ContextManager(8000, 2000), new EventBus(), view, true);
   const result = await a.gateAndExecute('task', { action: 'start', command: 'npm install -g example' }, new AbortController().signal);
   assert.equal(executions, 0); assert.match(result, /no longer available/);

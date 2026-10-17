@@ -82,10 +82,12 @@ test("loadSkill: case-insensitive, size-capped, coaches unknown names", () => {
   const { ws, home } = fixture();
   writeSkill(path.join(ws, ".smolcoder", "skills"), "big", "---\nname: big\ndescription: Big.\n---\n" + "y".repeat(20000));
   const skills = discoverSkills(ws, home);
-  const text = loadSkill(skills, "BIG");
+  const loaded = new Set();
+  const text = loadSkill(skills, "BIG", loaded);
   assert.match(text, /^Skill "big" \(project\):/);
   assert.match(text, /truncated/);
   assert.ok(text.length < 12500);
+  assert.deepEqual([...loaded], ["big"], "the canonical name is recorded for the session");
   assert.match(loadSkill(skills, "nope"), /no skill named "nope".*big/s);
   assert.match(loadSkill([], "nope"), /no skills are installed/);
   assert.match(loadSkill(skills, ""), /name is required/);
@@ -97,10 +99,14 @@ test("the skill tool is available in every mode and lists/loads skills", async (
   for (const mode of ["plan", "build", "auto"]) {
     assert.ok(buildToolSpecs(mode).some((t) => t.name === "skill"), mode);
   }
-  const ctx = { workspace: ws, filesTouched: new Set(), commandsRun: [] };
+  const ctx = { workspace: ws, filesTouched: new Set(), commandsRun: [], skillsLoaded: new Set(), skillsLoaded: new Set() };
   assert.match(await executeTool("skill", { action: "list" }, ctx), /retro \(project\) — Retopo pass\./);
   assert.match(await executeTool("skill", { action: "load", name: "retro" }, ctx), /STEP-ONE marker/);
+  assert.deepEqual([...ctx.skillsLoaded], ["retro"], "a successful load is recorded for the status row");
+  assert.match(await executeTool("skill", { action: "load", name: "nope" }, ctx), /no skill named/);
+  assert.deepEqual([...ctx.skillsLoaded], ["retro"], "a failed load records nothing");
   assert.match(await executeTool("skill", {}, ctx), /action must be/);
+  assert.deepEqual([...ctx.skillsLoaded], ["retro"]);
 });
 
 test("buildSystemPrompt appends the skills section", () => {

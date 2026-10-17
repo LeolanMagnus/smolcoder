@@ -115,7 +115,7 @@ test("agent: a turn with attachments sends the file text and the images to the p
     const provider = { label: "fake", modelId: "fake", contextWindow: 8000, maxOutputTokens: 2000, vision, setEffort() {}, effortLabel() { return null; }, async chat(messages) { seen.push(messages.at(-1)); return { content: "Done", toolCalls: [] }; } };
     const taskManager = new TaskManager(ws);
     managers.push(taskManager);
-    const ctx = { workspace: ws, plan: new Plan(), taskManager, filesTouched: new Set(), commandsRun: [] };
+    const ctx = { workspace: ws, plan: new Plan(), taskManager, filesTouched: new Set(), commandsRun: [], skillsLoaded: new Set() };
     return new Agent(provider, "plan", "sys", ctx, new ContextManager(8000, 2000), new EventBus(), ui, false, 5);
   };
   t.after(() => { for (const m of managers) m.killAll(); rm(dir); });

@@ -91,8 +91,10 @@ export function renderSkillsPrompt(skills: SkillInfo[]): string | null {
   );
 }
 
-/** The full instructions of one skill, for the skill tool's "load" action. */
-export function loadSkill(skills: SkillInfo[], name: string): string {
+/** The full instructions of one skill, for the skill tool's "load" action.
+ * `loaded` receives the canonical name when a read succeeds — the session
+ * uses it to show which skills are in play. */
+export function loadSkill(skills: SkillInfo[], name: string, loaded?: Set<string>): string {
   const wanted = String(name ?? "").trim().toLowerCase();
   if (!wanted) {
     return `Error: name is required. Example: {"action": "load", "name": "${skills[0]?.name ?? "my-skill"}"}`;
@@ -110,6 +112,7 @@ export function loadSkill(skills: SkillInfo[], name: string): string {
     return `Error: could not read the skill "${skill.name}": ${err?.message ?? err}`;
   }
   if (text.length > SKILL_TEXT_CAP) text = text.slice(0, SKILL_TEXT_CAP) + "\n[SKILL.md was truncated here to save context.]";
+  loaded?.add(skill.name);
   return `Skill "${skill.name}" (${skill.source}):\n\n${text}`;
 }
 

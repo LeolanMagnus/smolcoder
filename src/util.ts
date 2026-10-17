@@ -14,6 +14,7 @@ export const c = {
   yellow: (s: string) => wrap("33", s),
   red: (s: string) => wrap("31", s),
   magenta: (s: string) => wrap("35", s),
+  pink: (s: string) => wrap("38;5;205", s),
   gray: (s: string) => wrap("90", s),
 };
 
