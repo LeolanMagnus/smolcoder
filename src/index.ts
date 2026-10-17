@@ -31,6 +31,7 @@ import {
   setupWithoutLocalModels,
 } from "./session";
 import { Mode, ToolContext } from "./tools/index";
+import { shutdownMcp } from "./mcp";
 import { pickShell } from "./tools/shell";
 import { TaskManager } from "./tools/tasks";
 import { SessionStore } from "./store";
@@ -248,8 +249,8 @@ async function runHeadless(args: CliArgs): Promise<void> {
   const agent = new Agent(provider, mode, systemPrompt, toolCtx, ctxMgr, bus, ui, false, 1000,
     args.verify ? { command: args.verify, maxAttempts: args.verifyAttempts } : undefined);
   reportCompactions(bus, ui);
-  process.on("exit", () => taskManager.killAll());
-  installSignalCleanup(() => taskManager.killAll());
+  process.on("exit", () => { shutdownMcp(); taskManager.killAll(); });
+  installSignalCleanup(() => { shutdownMcp(); taskManager.killAll(); });
 
   ui.println(sessionLine(chosen, mode));
   if (chosen.note) ui.warn(`  ${chosen.note}`);
@@ -287,6 +288,9 @@ async function runHeadless(args: CliArgs): Promise<void> {
       })}\n`
     );
   }
+  // Kill MCP servers here too: their child processes would otherwise keep
+  // the event loop alive and hang the natural exit of a -p run.
+  shutdownMcp();
   taskManager.killAll();
   ui.close();
 }

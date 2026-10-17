@@ -1,10 +1,12 @@
-// Tool registry. Nine tools with flat parameters — no
-// nested objects or arrays: small models mangle them), an example call inside
-// every description (small models imitate better than they infer), and the
-// mode decides which schemas are sent. The agent rechecks mode at execution.
+// Tool registry. Nine built-in tools with flat parameters (no nested objects
+// or arrays: small models mangle them), an example call inside every
+// description (small models imitate better than they infer), and the mode
+// decides which schemas are sent. Tools from configured MCP servers join the
+// same set under "mcp_" names. The agent rechecks mode at execution.
 
 import { Plan } from "../plan";
-import { ToolSpec } from "../providers/types";
+import { ImageRef, ToolSpec } from "../providers/types";
+import { callMcpTool, isMcpTool } from "../mcp";
 import { editFile, listFiles, readFile, writeFile } from "./fs-tools";
 import { syntaxCheck } from "./check";
 import { runCommand } from "./shell";
@@ -193,6 +195,9 @@ export interface ToolContext {
   commandsRun: string[];
   /** Internal per-request cap; never a model-supplied tool argument. */
   resultCharLimit?: number;
+  /** Images returned by MCP tools during the current call. The agent drains
+   * this after execution and attaches them so a vision model can look. */
+  mcpImages?: ImageRef[];
 }
 
 export async function executeTool(
@@ -270,6 +275,12 @@ export async function executeTool(
         break;
       }
       default:
+        if (isMcpTool(name)) {
+          const out = await callMcpTool(name, args, ctx.workspace, signal);
+          if (out.images.length) (ctx.mcpImages ??= []).push(...out.images);
+          result = out.text;
+          break;
+        }
         return `Error: unknown tool "${name}". Available tools are listed in your tool definitions — use one of those.`;
     }
     return truncateMiddle(result, ctx.resultCharLimit ?? TOOL_RESULT_CAP);

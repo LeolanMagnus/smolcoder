@@ -23,6 +23,28 @@ export interface SavedHost {
   name?: string;
 }
 
+/** An optional stdio MCP (Model Context Protocol) server whose tools join the
+ * agent's toolset. Adding an entry is the trust decision: everything the
+ * server exposes becomes callable without further prompts — only run servers
+ * you would run their commands from. */
+export interface McpServerConfig {
+  /** Executable to spawn, e.g. "uvx", "npx" or "node". */
+  command: string;
+  args?: string[];
+  /** Extra environment variables for the server process (merged over the
+   * CLI's own environment). */
+  env?: Record<string, string>;
+  /** Set false to keep the entry but skip starting the server. */
+  enabled?: boolean;
+  /** Per-call timeout in milliseconds (default 120000). Long renders may
+   * need more. */
+  timeoutMs?: number;
+  /** Also expose this server's tools in plan mode. Default false: MCP tools
+   * cannot be inspected for safety the way built-ins can, so plan mode hides
+   * them unless you explicitly opt in. */
+  allowInPlan?: boolean;
+}
+
 export interface Config {
   lastModel?: string;
   /** Server the last model ran on — the same model id can exist on several machines. */
@@ -32,6 +54,9 @@ export interface Config {
   hosts?: SavedHost[];
   /** Reply theme: "auto" detects the terminal (default), or force dark/light. */
   theme?: "auto" | "dark" | "light";
+  /** MCP servers, keyed by a short name that becomes part of every tool name:
+   * "blender" turns a tool "get_scene_info" into mcp_blender_get_scene_info. */
+  mcpServers?: Record<string, McpServerConfig>;
 }
 
 export function loadConfig(): Config {
@@ -52,10 +77,37 @@ export function loadConfig(): Config {
           .filter((h: any) => h && typeof h.address === "string" && h.address.trim())
           .map((h: any) => ({ address: h.address.trim(), ...(typeof h.name === "string" && h.name.trim() ? { name: h.name.trim() } : {}) }))
       : [];
+    cfg.mcpServers = sanitizeMcpServers(cfg.mcpServers);
     return cfg;
   } catch {
     return {};
   }
+}
+
+/** Keep only well-formed MCP entries: a typo in one server must never take
+ * down the others or the run. Fields that fail validation are dropped, not
+ * the whole entry. */
+export function sanitizeMcpServers(raw: unknown): Record<string, McpServerConfig> {
+  const out: Record<string, McpServerConfig> = {};
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return out;
+  for (const [name, value] of Object.entries(raw as Record<string, unknown>)) {
+    const v = value as any;
+    if (!name.trim() || !v || typeof v !== "object" || typeof v.command !== "string" || !v.command.trim()) continue;
+    const entry: McpServerConfig = { command: v.command.trim() };
+    if (Array.isArray(v.args) && v.args.every((a: any) => typeof a === "string")) entry.args = v.args;
+    if (v.env && typeof v.env === "object" && !Array.isArray(v.env)) {
+      const env: Record<string, string> = {};
+      for (const [key, val] of Object.entries(v.env as Record<string, unknown>)) {
+        if (typeof val === "string") env[key] = val;
+      }
+      if (Object.keys(env).length) entry.env = env;
+    }
+    if (v.enabled === false) entry.enabled = false;
+    if (Number.isSafeInteger(v.timeoutMs) && v.timeoutMs > 0) entry.timeoutMs = v.timeoutMs;
+    if (v.allowInPlan === true) entry.allowInPlan = true;
+    out[name.trim()] = entry;
+  }
+  return out;
 }
 
 export function saveConfig(cfg: Config): void {

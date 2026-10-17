@@ -6,6 +6,8 @@ const assert = require("node:assert/strict");
 const fs = require("fs");
 const os = require("os");
 const path = require("path");
+// Keep the real ~/.smolcoder.json (and any configured MCP servers) out of tests.
+process.env.SMOLCODER_CONFIG = path.join(os.tmpdir(), `smolcoder-test-config-${process.pid}.json`);
 const { Agent } = require("../dist/agent");
 const { ContextManager } = require("../dist/context");
 const { EventBus } = require("../dist/events");

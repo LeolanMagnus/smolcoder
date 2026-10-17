@@ -3,6 +3,8 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
+// Keep the real ~/.smolcoder.json (and any configured MCP servers) out of tests.
+process.env.SMOLCODER_CONFIG = path.join(os.tmpdir(), `smolcoder-test-config-${process.pid}.json`);
 const { OllamaProvider } = require('../dist/providers/ollama');
 const { LmStudioProvider } = require('../dist/providers/lmstudio');
 const { ContextManager } = require('../dist/context');

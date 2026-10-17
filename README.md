@@ -146,11 +146,31 @@ smolcoder sends your code and prompts to the server you choose, and runs the too
 - **Browser and terminal panels.** Preview the dev server the agent started, or open a shell in the workspace, next to the chat.
 - **One server for everything.** Running `smol --web` in another folder adds it to the UI that is already open.
 
+## MCP servers (optional)
+
+smolcoder can start [MCP](https://modelcontextprotocol.io) servers over stdio. Their tools join the agent's toolset as `mcp_<server>_<tool>`, so even a Blender viewport or a design tool can be driven from the same chat. Add them to `~/.smolcoder.json`:
+
+```json
+{
+  "mcpServers": {
+    "blender": { "command": "uvx", "args": ["mcp-for-blender"] }
+  }
+}
+```
+
+- Adding an entry is the trust decision: everything a server exposes is callable without further prompts. Only configure servers you would run their commands from.
+- Up to twelve MCP tools are added, in config order — every schema is billed against the model's context window on every request.
+- Plan mode hides MCP tools unless the server sets `"allowInPlan": true`.
+- Per server: `command` (required), `args`, `env`, `timeoutMs` (default 120000), `enabled: false` to keep an entry but skip it.
+- Servers start with the first message of a session. A server that fails to start is reported in one line and the session continues without it.
+- When a tool returns an image — a Blender render, a screenshot — it is saved under `.smolcoder/mcp/` in the workspace and attached to the conversation so a vision model can look at the result.
+- On Windows, if `uvx` is not found directly, use `"command": "cmd", "args": ["/c", "uvx", "mcp-for-blender"]`.
+
 ## Why it works well with local models
 
 Local models are free and private, but they give you less to work with. The context window is small, generation is slower, and long instructions get lost. smolcoder is built around those limits.
 
-- **It stays out of the model's way.** A short system prompt and nine simple tools (five in plan mode) leave most of the window for your code.
+- **It stays out of the model's way.** A short system prompt and nine simple tools (five in plan mode) leave most of the window for your code. Optional MCP tools join the same set, capped at twelve.
 - **It watches the real window.** It asks the server how much context is actually loaded, shows a meter, and keeps room for the reply. A model that advertises a 128k window is often loaded with 4k, and smolcoder budgets for the 4k.
 - **It tidies up as it goes, not just before the window fills.** Once a large file is written, its body is dropped from the conversation immediately — the code is on disk and can be re-read. Old file reads and command output are cleared next. Only then does it ask the model for a short handover. Your request and the checklist are never summarized away.
 - **It keeps the plan outside the conversation.** The to-do list and the notes for the current step live in smolcoder itself, so they survive any summary. If a long run has no plan, the agent is reminded once to make one; step text is kept short.

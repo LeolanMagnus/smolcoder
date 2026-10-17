@@ -7,6 +7,8 @@ const fs = require("fs");
 const http = require("http");
 const os = require("os");
 const path = require("path");
+// Keep the real ~/.smolcoder.json (and any configured MCP servers) out of tests.
+process.env.SMOLCODER_CONFIG = path.join(os.tmpdir(), `smolcoder-test-config-${process.pid}.json`);
 const { classifyUpload, extOf, renderAttachmentsForModel, safeName, IMAGE_TOKENS, MAX_TEXT_BYTES } = require("../dist/attachments");
 const { toWire: ollamaWire } = require("../dist/providers/ollama");
 const { toWire: lmWire } = require("../dist/providers/lmstudio");

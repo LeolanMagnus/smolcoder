@@ -6,7 +6,7 @@
 import { Attachment, renderAttachmentsForModel } from "./attachments";
 import { ContextManager } from "./context";
 import { EventBus } from "./events";
-import { ChatResult, Msg, Provider, ToolSpec } from "./providers/types";
+import { ChatResult, ImageRef, Msg, Provider, ToolSpec } from "./providers/types";
 import {
   buildToolSpecs,
   executeTool,
@@ -15,6 +15,7 @@ import {
   commandOf,
   ToolContext,
 } from "./tools/index";
+import { ensureMcpStarted, mcpNeedsStart, mcpSpecsFor, takeMcpNotes } from "./mcp";
 import { AgentUI } from "./ui";
 import { c, fmtDuration } from "./util";
 import { commandEscapesWorkspace } from "./sandbox";
@@ -122,7 +123,7 @@ export class Agent {
     this.verification = callerVerification;
     if (callerVerification && (!callerVerification.command.trim() || (callerVerification.maxAttempts !== undefined && (!Number.isSafeInteger(callerVerification.maxAttempts) || callerVerification.maxAttempts < 1)))) throw new Error("Verification needs a command and a positive attempt limit.");
     this.messages = [{ role: "system", content: systemPrompt }];
-    this.tools = buildToolSpecs(mode);
+    this.tools = this.toolSpecsFor(mode);
     this.ctxMgr.setReplayThinking(provider.replaysThinking !== false);
   }
 
@@ -131,7 +132,7 @@ export class Agent {
     this.ctxMgr.cancelBackground(true);
     this.ctxMgr.resetAnchor();
     this.mode = mode;
-    this.tools = buildToolSpecs(mode);
+    this.tools = this.toolSpecsFor(mode);
     this.messages[0] = { role: "system", content: systemPrompt };
     // Tell the model about a mid-conversation switch: the new system prompt and
     // tool set are advisory for what already happened, and the model can keep
@@ -143,6 +144,24 @@ export class Agent {
     this.ctxMgr.cancelBackground(true);
     this.provider = provider;
     this.ctxMgr.setReplayThinking(provider.replaysThinking !== false);
+  }
+
+  /** Schemas for a mode: the built-ins plus every MCP tool the servers
+   * advertised (hidden in plan mode unless that server opted in). */
+  private toolSpecsFor(mode: Mode): ToolSpec[] {
+    return [...buildToolSpecs(mode), ...mcpSpecsFor(mode)];
+  }
+
+  /** Fold freshly started MCP tools into the active set and surface the
+   * connection notes once. */
+  private adoptMcpTools(): void {
+    for (const note of takeMcpNotes()) {
+      if (note.level === "warn") this.ui.warn(`· ${note.text}`);
+      else this.ui.status(`· ${note.text}`);
+    }
+    const previous = this.tools.length;
+    this.tools = this.toolSpecsFor(this.mode);
+    if (this.tools.length !== previous) this.ctxMgr.resetAnchor();
   }
 
   resetTranscript(): void {
@@ -304,6 +323,10 @@ export class Agent {
     this.ctxMgr.cancelBackground(true);
     this.outcome = "running";
     this.ctxMgr.resetAnchor(); // prior-turn reasoning no longer travels on the wire
+    // Connect configured MCP servers on the first turn; their tools join the
+    // active set. Failures surface as notes and never block the turn.
+    if (mcpNeedsStart()) this.ui.status("· starting MCP servers");
+    if (await ensureMcpStarted()) this.adoptMcpTools();
     this.lastError = null;
     this.verificationResult = null;
     this.verification = this.callerVerification;
@@ -356,6 +379,7 @@ export class Agent {
     let actionOnlyCalls = 0;
     let reasoningExhaustions = 0;
     let wroteThisTurn = false;
+    const turnImages: ImageRef[] = [];
     let lastProgressCheck = 0;
     const stats: TurnStats = {
       modelCalls: 0,
@@ -498,6 +522,7 @@ export class Agent {
           let output: string;
           let observedOutput: string | undefined;
           const callStarted = Date.now();
+          if (this.toolCtx.mcpImages) this.toolCtx.mcpImages.length = 0;
           if (call.parseError) {
             // LM Studio streams the partial arguments of a cut-off call, so
             // the overflow surfaces here as unparseable JSON.
@@ -528,6 +553,10 @@ export class Agent {
               observedOutput = output; // fingerprint real evidence before coaching/reminders
               toolCallsThisTurn++;
               stats.toolCalls++;
+              if (this.toolCtx.mcpImages?.length) {
+                turnImages.push(...this.toolCtx.mcpImages);
+                this.toolCtx.mcpImages.length = 0;
+              }
               // Tier-0 context hygiene: a full overwrite makes every earlier
               // read of that file wrong. Stub them out right away.
               if ((call.name === "write_file" || call.name === "edit_file") && !output.startsWith("Error") && typeof call.args?.path === "string") {
@@ -634,6 +663,25 @@ export class Agent {
           }
           if (readRepeats >= 5) throw new Error("Paused after repeatedly reading the same unchanged data without an edit. Progress is kept. Ask for a specific next change, read a different range, or use a larger context window.");
           if (repeats >= 6 || failedCalls >= 6) throw new Error("Paused after repeated tool attempts made no progress. Progress is kept; inspect the error, change the request or model, then continue.");
+        }
+        // Images from MCP tools (Blender renders, screenshots) ride as one
+        // user message after the whole batch: tool results must stay adjacent
+        // to their assistant message for strict backends to accept the shape.
+        if (turnImages.length) {
+          const what = turnImages.length === 1 ? "An image" : `${turnImages.length} images`;
+          if (this.provider.vision !== false) {
+            this.messages.push({
+              role: "user",
+              content: `[${what} produced by the tool call${turnImages.length === 1 ? "" : "s"} above ${turnImages.length === 1 ? "is" : "are"} attached — look at the result before continuing.]`,
+              images: [...turnImages],
+            });
+          } else {
+            this.messages.push({
+              role: "user",
+              content: `[${what} produced by a tool ${turnImages.length === 1 ? "was" : "were"} saved under .smolcoder/mcp/ in the workspace, but this model cannot view images.]`,
+            });
+          }
+          turnImages.length = 0;
         }
         // The write is on disk and its receipt recorded: collapse the applied
         // body now instead of waiting for compaction, so one large file write
