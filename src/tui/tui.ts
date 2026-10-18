@@ -853,10 +853,11 @@ export class Tui implements SessionUI {
       this.currentThought = this.transcript.add({ kind: "thought", raw: "", expanded: false, seconds: 0 });
     }
     this.thoughtRaw += text;
+    const prev = this.transcript.blockAt(this.currentThought);
     this.transcript.update(this.currentThought, {
       kind: "thought",
       raw: this.thoughtRaw,
-      expanded: false,
+      expanded: prev?.kind === "thought" ? prev.expanded : false,
       seconds: Math.floor((Date.now() - this.thoughtStart) / 1000),
     });
     this.render();

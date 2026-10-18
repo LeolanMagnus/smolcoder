@@ -145,20 +145,26 @@ test("tui: a tool call expands on a click to its result summary", () => {
   capture(() => tui.close());
 });
 
-test("tui: reasoning streams on a live ticker and collapses on content", () => {
+test("tui: reasoning stays expanded once clicked while streaming", () => {
   const tui = new Tui();
   const frame = capture(() => {
     tui.start();
     tui.thinking("weighing the options");
   });
-  assert.match(frame, /✦/, "reasoning shows the pulse marker");
-  assert.match(frame, /weighing the options/);
+  assert.match(frame, /✦/, "reasoning shows the thought marker");
+  assert.doesNotMatch(frame, /weighing the options/, "the body is hidden while collapsed");
+
+  const expanded = capture(() => click(1));
+  assert.match(expanded, /weighing the options/, "a click reveals the reasoning");
+
+  const streamed = capture(() => tui.thinking(" and more"));
+  assert.match(streamed, /weighing the options and more/, "later chunks do not collapse it again");
 
   const after = capture(() => {
     tui.token("answer\n");
     tui.close();
   });
-  assert.doesNotMatch(after, /weighing the options/);
+  assert.match(after, /weighing the options and more/, "it stays expanded when the answer starts");
 });
 
 test("tui: replayConversation clears the screen and rebuilds a resumed transcript", () => {
