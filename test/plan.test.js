@@ -40,13 +40,22 @@ test('working checkpoints survive a JSON session round trip and do not complete 
   restored.steps = JSON.parse(JSON.stringify(p.steps));
   assert.equal(restored.doneCount, 0);
   assert.match(restored.compactLine(), /makeSaver\(storage, size\)/);
-  assert.match(restored.checkpoint('x'.repeat(1001)), /^Error/);
+  assert.match(restored.checkpoint('x'.repeat(2001)), /^Error/);
   assert.match(restored.modelView(), /makeSaver/);
   restored.checkpoint('replacement checkpoint');
   assert.doesNotMatch(restored.modelView(), /makeSaver/);
   restored.markDone();
   assert.doesNotMatch(restored.modelView(), /replacement checkpoint/);
   assert.equal(restored.steps[0].note, 'replacement checkpoint');
+});
+
+test('a working checkpoint accepts up to 2000 characters and rejects longer text', () => {
+  const p = new Plan();
+  p.set('investigate');
+  assert.match(p.checkpoint('c'.repeat(2000)), /^Checkpoint saved/);
+  assert.equal(p.steps[0].note.length, 2000);
+  assert.match(p.checkpoint('c'.repeat(2001)), /^Error/);
+  assert.equal(p.steps[0].note.length, 2000);
 });
 
 test('overlong steps are capped so the checklist stays cheap in a small window', () => {

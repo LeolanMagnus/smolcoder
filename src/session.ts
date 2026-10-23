@@ -11,7 +11,7 @@ import { ContextManager } from "./context";
 import { detectAll, DetectedModel, resolveContextWindow } from "./detect";
 import { EventBus } from "./events";
 import { findModelsOnNetwork, FlowUI, manageHosts } from "./network";
-import { Plan, PlanStep } from "./plan";
+import { Plan, PLAN_CHECKPOINT_MAX_CHARS, PlanStep } from "./plan";
 import { buildSystemPrompt, loadAgentsMd } from "./prompt";
 import { LmStudioProvider } from "./providers/lmstudio";
 import { OllamaProvider } from "./providers/ollama";
@@ -625,7 +625,7 @@ export class Session {
     this.toolCtx.plan.reset();
     this.agent.restoreTranscript(s.messages ?? [], s.originalRequest ?? "", s.currentRequest ?? "");
     this.toolCtx.plan.steps = (s.plan ?? []).map((p) => ({ text: String(p.text), done: !!p.done,
-      ...(typeof p.note === "string" ? { note: p.note.slice(0, 1000) } : {}) }));
+      ...(typeof p.note === "string" ? { note: p.note.slice(0, PLAN_CHECKPOINT_MAX_CHARS) } : {}) }));
     for (const f of s.filesTouched ?? []) this.toolCtx.filesTouched.add(f);
     this.toolCtx.commandsRun.push(...(s.commandsRun ?? []));
     this.restoreLoadedSkills();

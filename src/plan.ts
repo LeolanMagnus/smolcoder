@@ -8,6 +8,10 @@
  * window, not a place to stash paragraphs. Exact APIs belong in checkpoints. */
 const PLAN_STEP_MAX_CHARS = 200;
 
+/** Checkpoints are re-injected verbatim, so they may hold more than a step,
+ * but they stay bounded to keep the active prompt cheap. */
+export const PLAN_CHECKPOINT_MAX_CHARS = 2000;
+
 function capStep(text: string): string {
   return text.length > PLAN_STEP_MAX_CHARS ? text.slice(0, PLAN_STEP_MAX_CHARS).trimEnd() + "…" : text;
 }
@@ -106,7 +110,7 @@ export class Plan {
   checkpoint(text: string): string {
     const idx = this.currentIndex;
     if (idx < 0) return 'Error: create a plan with an unfinished step before recording a checkpoint.';
-    if (!text.trim() || text.length > 1000) return 'Error: checkpoint text must be 1–1000 characters. Keep exact APIs, the unresolved error and the next small edit.';
+    if (!text.trim() || text.length > PLAN_CHECKPOINT_MAX_CHARS) return `Error: checkpoint text must be 1–${PLAN_CHECKPOINT_MAX_CHARS} characters. Keep exact APIs, the unresolved error and the next small edit.`;
     this.steps[idx].note = text.trim();
     return `Checkpoint saved for step ${idx + 1}: ${text.trim()}`;
   }

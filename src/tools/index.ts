@@ -110,7 +110,7 @@ export function buildToolSpecs(mode: Mode): ToolSpec[] {
     {
       name: "plan",
       description:
-        'Plan runnable increments, kept across compaction. Create: {"action":"set","steps":"wire entry point; run build; add movement and test"}. Finish current step: {"action":"done"} (or supply step). Save exact APIs, error and next edit before a long investigation: {"action":"checkpoint","text":"..."} (max 1000 chars, replaces current step notes). Append: {"action":"add","text":"..."}. Show: {"action":"show"}.',
+        'Plan runnable increments, kept across compaction. Create: {"action":"set","steps":"wire entry point; run build; add movement and test"}. Finish current step: {"action":"done"} (or supply step). Save exact APIs, error and next edit before a long investigation: {"action":"checkpoint","text":"..."} (max 2000 chars, replaces current step notes). Append: {"action":"add","text":"..."}. Show: {"action":"show"}.',
       parameters: {
         type: "object",
         properties: {
