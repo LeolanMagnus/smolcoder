@@ -24,8 +24,8 @@ const { TaskManager } = require("../dist/tools/tasks");
 function baseServer(extra = {}) {
   return { command: process.execPath, args: [FIXTURE], timeoutMs: 8000, ...extra };
 }
-function writeConfig(server) {
-  fs.writeFileSync(CONFIG, JSON.stringify({ mcpServers: { fixture: server } }));
+function writeConfig(server, extra = {}) {
+  fs.writeFileSync(CONFIG, JSON.stringify({ ...extra, mcpServers: { fixture: server } }));
 }
 function freshCtx(workspace) {
   return { workspace, filesTouched: new Set(), commandsRun: [], skillsLoaded: new Set() };
@@ -79,6 +79,14 @@ test("caps injected MCP tools at 12 and reports the rest", async () => {
   assert.equal(mcp.mcpSpecsFor("build").length, 12);
   const notes = mcp.takeMcpNotes().map((n) => n.text).join("\n");
   assert.match(notes, /cap of 12/);
+});
+
+test("maxMcpTools raises the cap", async () => {
+  writeConfig(baseServer({ env: { MCP_FIXTURE_MANY: "1" } }), { maxMcpTools: 28 });
+  mcp.shutdownMcp();
+  await mcp.ensureMcpStarted();
+  assert.equal(mcp.mcpSpecsFor("build").length, 25);
+  assert.doesNotMatch(mcp.takeMcpNotes().map((n) => n.text).join("\n"), /cap of/);
 });
 
 test("allowInPlan exposes a server's tools in plan mode", async () => {

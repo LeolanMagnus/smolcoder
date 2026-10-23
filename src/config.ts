@@ -57,6 +57,9 @@ export interface Config {
   /** MCP servers, keyed by a short name that becomes part of every tool name:
    * "blender" turns a tool "get_scene_info" into mcp_blender_get_scene_info. */
   mcpServers?: Record<string, McpServerConfig>;
+  /** Hard cap on MCP tools injected across all servers (default 12). Every
+   * schema is billed against the model's context window on every request. */
+  maxMcpTools?: number;
 }
 
 export function loadConfig(): Config {

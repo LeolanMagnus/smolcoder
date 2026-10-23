@@ -10,10 +10,10 @@ import { ImageRef, ToolSpec } from "../providers/types";
 import { Mode } from "../tools/index";
 import { McpCallResult, McpClient, McpContentPart, McpToolInfo } from "./client";
 
-/** Hard cap on injected MCP tools: every schema is billed against the local
- * model's context window on every request. Servers are connected in config
- * order; tools beyond the cap are reported and skipped. */
-const MAX_MCP_TOOLS = 12;
+/** Default hard cap on injected MCP tools: every schema is billed against the
+ * local model's context window on every request. Servers are connected in
+ * config order; tools beyond the cap are reported and skipped. */
+const DEFAULT_MAX_MCP_TOOLS = 12;
 const MAX_DESCRIPTION_CHARS = 600;
 
 interface RegisteredTool {
@@ -70,10 +70,16 @@ function enabledServers(): [string, McpServerConfig][] {
   return Object.entries(servers).filter(([, cfg]) => cfg.enabled !== false);
 }
 
+function mcpToolCap(): number {
+  const configured = loadConfig().maxMcpTools;
+  return Number.isSafeInteger(configured) && configured! > 0 ? configured! : DEFAULT_MAX_MCP_TOOLS;
+}
+
 async function startAll(): Promise<boolean> {
   started = true;
   const servers = enabledServers();
   if (servers.length === 0) return false;
+  const maxTools = mcpToolCap();
   let count = 0;
   for (const [name, cfg] of servers) {
     const client = new McpClient(name, cfg.command, cfg.args ?? [], cfg.env, cfg.timeoutMs ?? 120_000);
@@ -83,8 +89,8 @@ async function startAll(): Promise<boolean> {
       let added = 0;
       for (const info of advertised) {
         if (!info?.name) continue;
-        if (count >= MAX_MCP_TOOLS) {
-          notes.push({ level: "info", text: `mcp "${name}": tool cap of ${MAX_MCP_TOOLS} reached — "${info.name}" is not exposed` });
+        if (count >= maxTools) {
+          notes.push({ level: "info", text: `mcp "${name}": tool cap of ${maxTools} reached — "${info.name}" is not exposed` });
           continue;
         }
         const wire = uniqueWireName(name, info.name);
